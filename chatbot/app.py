@@ -1,4 +1,4 @@
-# Versión 25.0 (FINAL: Traducción Completa Chips + Excel + Filtros + Base Estable)
+# Versión 26.0 (FINAL: Multi-Documento Reglamento + Calendario + CSS Fix)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -30,24 +30,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CARGAR CSS DESDE ARCHIVO EXTERNO (CORREGIDO PARA DEPLOY) ---
+# --- CARGAR CSS DESDE ARCHIVO EXTERNO (Ruta Absoluta Segura) ---
 def load_css(file_name):
-    # 1. Obtener la ruta absoluta del directorio donde está ESTE archivo app.py
     directorio_actual = os.path.dirname(os.path.abspath(__file__))
-    # 2. Unir esa ruta con el nombre del archivo CSS
     ruta_css = os.path.join(directorio_actual, file_name)
-    
     try:
         with open(ruta_css) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
-        # Mensaje de error detallado para depuración
-        st.error(f"⚠️ Error: No se encontró el archivo CSS en la ruta: {ruta_css}")
+        st.error(f"⚠️ Error: No se encontró el estilo en: {ruta_css}")
 
-# Cargar estilos visuales
 load_css("styles.css")
 
-# --- DICCIONARIO DE TRADUCCIONES (ACTUALIZADO CON CHIPS) ---
+# --- DICCIONARIO DE TRADUCCIONES ---
 TEXTS = {
     "es": {
         "label": "Español 🇨🇱",
@@ -55,7 +50,7 @@ TEXTS = {
         "sidebar_lang": "Idioma / Language",
         "login_success": "Usuario:",
         "logout_btn": "Cerrar Sesión",
-        "tab1": "💬 Chatbot Reglamento",
+        "tab1": "💬 Chatbot Académico",
         "tab2": "📅 Inscripción de Asignaturas",
         "tab3": "🔐 Admin / Auditoría",
         "login_title": "Iniciar Sesión",
@@ -67,14 +62,14 @@ TEXTS = {
         "chat_clear_btn": "🧹 Limpiar Conversación",
         "chat_cleaning": "Procesando solicitud...",
         "chat_cleaned": "¡Historial limpiado!",
-        "chat_welcome": "¡Hola **{name}**! 👋 Soy tu asistente virtual de Duoc UC. Pregúntame sobre el reglamento, asistencia o notas.",
-        "chat_welcome_clean": "¡Hola **{name}**! El historial ha sido archivado. ¿En qué más te ayudo?",
-        "chat_placeholder": "Ej: ¿Con qué nota apruebo el ramo?",
-        "chat_thinking": "Consultando reglamento...",
+        "chat_welcome": "¡Hola **{name}**! 👋 Soy tu asistente virtual. Pregúntame sobre el reglamento, fechas importantes o asistencia.",
+        "chat_welcome_clean": "¡Hola **{name}**! Historial archivado. ¿En qué más te ayudo?",
+        "chat_placeholder": "Ej: ¿Cuándo empiezan las clases?",
+        "chat_thinking": "Consultando documentos...",
         "feedback_thanks": "¡Gracias por tu feedback! 👍",
         "feedback_report_sent": "Reporte enviado.",
         "feedback_modal_title": "¿Qué podemos mejorar?",
-        "feedback_modal_placeholder": "Ej: La información sobre asistencia no es precisa...",
+        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta...",
         "btn_send": "Enviar Comentario",
         "btn_cancel": "Omitir",
         "enroll_title": "Toma de Ramos 2025",
@@ -113,14 +108,13 @@ TEXTS = {
         "reg_btn": "Registrarse",
         "reg_success": "¡Cuenta creada! Accede desde el Login.",
         "auth_error": "Verifica tus datos.",
-        # --- NUEVAS TRADUCCIONES PARA CHIPS ---
         "sug_header": "💡 **¿No sabes qué preguntar? Prueba con esto:**",
-        "sug_btn1": "📋 Justificar Inasistencia",
-        "sug_query1": "¿Cómo justifico una inasistencia?",
+        "sug_btn1": "📅 Inicio de Clases",
+        "sug_query1": "¿Cuándo comienzan las clases este semestre?",
         "sug_btn2": "🎓 Requisitos Titulación",
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
-        "sug_btn3": "📅 Fechas Exámenes",
-        "sug_query3": "¿Cuándo son los exámenes transversales?",
+        "sug_btn3": "📋 Justificar Inasistencia",
+        "sug_query3": "¿Cómo justifico una inasistencia?",
         "system_prompt": """
         INSTRUCCIÓN: Responde en Español formal pero cercano.
         ROL: Eres un coordinador académico de Duoc UC.
@@ -132,7 +126,7 @@ TEXTS = {
         "sidebar_lang": "Language / Idioma",
         "login_success": "User:",
         "logout_btn": "Log Out",
-        "tab1": "💬 Rulebook Chat",
+        "tab1": "💬 Academic Chat",
         "tab2": "📅 Course Enrollment",
         "tab3": "🔐 Admin / Audit",
         "login_title": "Student Login",
@@ -144,14 +138,14 @@ TEXTS = {
         "chat_clear_btn": "🧹 Clear Conversation",
         "chat_cleaning": "Processing...",
         "chat_cleaned": "History cleared!",
-        "chat_welcome": "Hello **{name}**! 👋 I'm your Duoc UC virtual assistant. Ask me about regulations, attendance, or grades.",
+        "chat_welcome": "Hello **{name}**! 👋 I'm your Duoc UC assistant. Ask me about rules, dates, or grades.",
         "chat_welcome_clean": "Hello **{name}**! History archived. Can I help with anything else?",
-        "chat_placeholder": "Ex: What is the passing grade?",
-        "chat_thinking": "Consulting rulebook...",
+        "chat_placeholder": "Ex: When do classes start?",
+        "chat_thinking": "Consulting documents...",
         "feedback_thanks": "Thanks for your feedback! 👍",
         "feedback_report_sent": "Report sent.",
         "feedback_modal_title": "What went wrong?",
-        "feedback_modal_placeholder": "Ex: The information is inaccurate...",
+        "feedback_modal_placeholder": "Ex: The date is wrong...",
         "btn_send": "Send Comment",
         "btn_cancel": "Skip",
         "enroll_title": "Course Registration 2025",
@@ -190,14 +184,13 @@ TEXTS = {
         "reg_btn": "Register",
         "reg_success": "Account created! Please login.",
         "auth_error": "Check your credentials.",
-        # --- NUEVAS TRADUCCIONES PARA CHIPS ---
         "sug_header": "💡 **Don't know what to ask? Try this:**",
-        "sug_btn1": "📋 Justify Absence",
-        "sug_query1": "How do I justify an absence?",
+        "sug_btn1": "📅 Class Start Date",
+        "sug_query1": "When do classes start this semester?",
         "sug_btn2": "🎓 Graduation Reqs",
         "sug_query2": "What are the requirements for graduation?",
-        "sug_btn3": "📅 Exam Dates",
-        "sug_query3": "When are the transversal exams?",
+        "sug_btn3": "📋 Justify Absence",
+        "sug_query3": "How do I justify an absence?",
         "system_prompt": """
         INSTRUCTION: Respond in English, formal but friendly.
         ROLE: You are an academic coordinator at Duoc UC.
@@ -212,7 +205,7 @@ SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DUOC2025")
 
 if not GROQ_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("Error: Faltan claves de API.")
+    st.error("Error: Faltan claves de API. Verifica tus Secrets.")
     st.stop()
 
 # --- SUPABASE ---
@@ -228,39 +221,72 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- CHATBOT ENGINE ---
+# --- CHATBOT ENGINE (MULTI-DOCUMENTO) ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    # NOTA: Asegúrate de que reglamento.pdf esté en la misma carpeta o usa os.path.join también aquí si falla
-    try:
-        loader = PyPDFLoader(os.path.join(os.path.dirname(os.path.abspath(__file__)), "reglamento.pdf"))
-    except:
-        loader = PyPDFLoader("reglamento.pdf") # Fallback
-        
+    # 1. DEFINICIÓN DE ARCHIVOS A CARGAR
+    # Asegúrate de que estos archivos estén en la misma carpeta que app.py
+    nombres_archivos = ["reglamento.pdf", "calendario_academico_2026.pdf"]
+    
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    all_docs = []
+    
+    # 2. CARGA DE DOCUMENTOS
+    for archivo in nombres_archivos:
+        ruta_completa = os.path.join(base_path, archivo)
+        try:
+            loader = PyPDFLoader(ruta_completa)
+            docs_archivo = loader.load()
+            all_docs.extend(docs_archivo)
+            print(f"✅ Cargado: {archivo}")
+        except Exception as e:
+            print(f"⚠️ Error cargando {archivo}: {e}")
+            # Intentamos buscar en la ruta relativa como fallback
+            try:
+                loader = PyPDFLoader(archivo)
+                docs_archivo = loader.load()
+                all_docs.extend(docs_archivo)
+            except:
+                continue
+
+    if not all_docs:
+        st.error("Error Crítico: No se encontraron documentos PDF (Reglamento/Calendario).")
+        st.stop()
+
+    # 3. PROCESAMIENTO
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    docs = loader.load_and_split(text_splitter=text_splitter)
+    docs_procesados = text_splitter.split_documents(all_docs)
+
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector_store = Chroma.from_documents(docs, embeddings)
+    vector_store = Chroma.from_documents(docs_procesados, embeddings)
+    
     vector_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
-    bm25_retriever = BM25Retriever.from_documents(docs)
+    bm25_retriever = BM25Retriever.from_documents(docs_procesados)
     bm25_retriever.k = 7
+    
     retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
     llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
     
     base_instruction = TEXTS[language_code]["system_prompt"]
     
+    # 4. PROMPT HÍBRIDO (Reglas + Fechas)
     prompt_template = base_instruction + """
-    RULES:
-    1. Address {user_name} by name.
-    2. Be clear and concise.
-    3. Base answer ONLY on context.
-    4. Cite the article (e.g. "Article N°30").
+    REGLAS IMPORTANTES:
+    1. Dirígete a {user_name} por su nombre.
+    2. Responde de forma clara, concisa y profesional.
+    3. Basa tu respuesta ÚNICAMENTE en el contexto proporcionado.
+    
+    4. USO INTELIGENTE DE FUENTES:
+       - Si la pregunta es sobre **Normas, Asistencia, Notas o Procesos**: Basa tu respuesta en el 'Reglamento'. Cita el artículo si aparece.
+       - Si la pregunta es sobre **Fechas, Plazos, Inicio de Clases o Feriados**: Basa tu respuesta en el 'Calendario Académico'. Indica claramente la fecha.
+    
+    5. Si la información no está en ninguno de los documentos, di honestamente que no tienes esa información.
 
-    CONTEXT:
+    CONTEXTO:
     {context}
-    QUESTION FROM {user_name}:
+    PREGUNTA DE {user_name}:
     {input}
-    ANSWER:
+    RESPUESTA:
     """
     prompt = ChatPromptTemplate.from_template(prompt_template)
     document_chain = create_stuff_documents_chain(llm, prompt)
@@ -376,33 +402,26 @@ if st.session_state["authentication_status"] is True:
                                 st.session_state[reason_key] = False
                                 st.rerun()
 
-        # --- CHIPS TRADUCIBLES Y FUNCIONALES ---
+        # --- CHIPS DE SUGERENCIAS ---
         if not st.session_state.messages or (len(st.session_state.messages) == 1 and st.session_state.messages[0]['role'] == 'assistant'):
             st.markdown(t["sug_header"])
             col_sug1, col_sug2, col_sug3 = st.columns(3)
             sugerencia = None
-            # Botones ahora usan el diccionario 't' para el texto
             if col_sug1.button(t["sug_btn1"]): sugerencia = t["sug_query1"]
             if col_sug2.button(t["sug_btn2"]): sugerencia = t["sug_query2"]
             if col_sug3.button(t["sug_btn3"]): sugerencia = t["sug_query3"]
             
             if sugerencia:
-                # 1. Guardar mensaje usuario
                 st.session_state.messages.append({"role": "user", "content": sugerencia})
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia}).execute()
-
-                # 2. Generar respuesta IA INMEDIATAMENTE
                 with st.spinner(t["chat_thinking"]):
                     try:
                         response = retrieval_chain.invoke({"input": sugerencia, "user_name": user_name})
                         resp = response["answer"]
-                        
-                        # 3. Guardar respuesta IA
                         res_bot = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
                         st.session_state.messages.append({"id": res_bot.data[0]['id'], "role": "assistant", "content": resp})
                     except Exception as e:
                         st.error(f"Error generando respuesta: {e}")
-                # 4. Recargar para mostrar
                 st.rerun()
 
         if prompt := st.chat_input(t["chat_placeholder"]):
@@ -444,13 +463,11 @@ if st.session_state["authentication_status"] is True:
         if not subjects_data: 
             st.warning("No data.")
         else:
-            # 1. Inicializar variables de estado
             if "selected_career" not in st.session_state:
                 st.session_state.selected_career = t["filter_all"]
             if "selected_semester" not in st.session_state:
                 st.session_state.selected_semester = t["filter_all_m"]
 
-            # 2. Lógica de Filtrado Cruzado
             temp_data_car = subjects_data
             if st.session_state.selected_semester != t["filter_all_m"]:
                 try:
@@ -473,7 +490,6 @@ if st.session_state["authentication_status"] is True:
             if st.session_state.selected_semester not in semester_opts:
                 st.session_state.selected_semester = t["filter_all_m"]
 
-            # 3. Renderizar Selectbox con Keys
             c_f1, c_f2, c_res = st.columns([2, 2, 1])
             with c_f1:
                 st.selectbox(t["filter_career"], career_opts, key="selected_career")
@@ -563,7 +579,6 @@ if st.session_state["authentication_status"] is True:
                 if not response.data: 
                     st.warning("Aún no hay interacciones con feedback.")
                 else:
-                    # Métricas
                     total_feedback = len(response.data)
                     total_good = sum(1 for x in response.data if x['feedback'] and x['feedback'][0]['rating'] == 'good')
                     total_bad = sum(1 for x in response.data if x['feedback'] and x['feedback'][0]['rating'] == 'bad')
