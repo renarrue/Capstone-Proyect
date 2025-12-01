@@ -30,13 +30,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CARGAR CSS DESDE ARCHIVO EXTERNO ---
+# --- CARGAR CSS DESDE ARCHIVO EXTERNO (CORREGIDO PARA DEPLOY) ---
 def load_css(file_name):
+    # 1. Obtener la ruta absoluta del directorio donde está ESTE archivo app.py
+    directorio_actual = os.path.dirname(os.path.abspath(__file__))
+    # 2. Unir esa ruta con el nombre del archivo CSS
+    ruta_css = os.path.join(directorio_actual, file_name)
+    
     try:
-        with open(file_name) as f:
+        with open(ruta_css) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
-        st.error(f"⚠️ No se encontró el archivo {file_name}. Asegúrate de que esté en la misma carpeta que app.py.")
+        # Mensaje de error detallado para depuración
+        st.error(f"⚠️ Error: No se encontró el archivo CSS en la ruta: {ruta_css}")
 
 # Cargar estilos visuales
 load_css("styles.css")
@@ -225,7 +231,12 @@ def stream_data(text):
 # --- CHATBOT ENGINE ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    loader = PyPDFLoader("reglamento.pdf")
+    # NOTA: Asegúrate de que reglamento.pdf esté en la misma carpeta o usa os.path.join también aquí si falla
+    try:
+        loader = PyPDFLoader(os.path.join(os.path.dirname(os.path.abspath(__file__)), "reglamento.pdf"))
+    except:
+        loader = PyPDFLoader("reglamento.pdf") # Fallback
+        
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = loader.load_and_split(text_splitter=text_splitter)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
