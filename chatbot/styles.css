@@ -250,16 +250,25 @@ a:hover {
     box-shadow: var(--shadow-sm);
 }
 
-/* Botón primario */
-.stButton > button[kind="primary"] {
+/* SOLUCIÓN: Botón primario con texto oscuro */
+.stButton > button[kind="primary"],
+.stButton > button[data-testid*="anular"],
+.stButton > button[data-testid*="inscribir"] {
     background: linear-gradient(135deg, var(--duoc-yellow) 0%, var(--duoc-yellow-dark) 100%);
-    color: var(--duoc-blue-dark);
+    
+    /* CAMBIO CLAVE: Texto azul oscuro en lugar de blanco */
+    color: var(--duoc-blue-dark) !important;  /* #001529 */
+    
     border-color: transparent;
     font-weight: 700;
+    
+    /* Sombra de texto para más legibilidad */
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
 }
 
 .stButton > button[kind="primary"]:hover {
     background: linear-gradient(135deg, var(--duoc-yellow-dark) 0%, var(--duoc-yellow) 100%);
+    color: var(--duoc-blue-dark) !important;
     box-shadow: 0 0 25px rgba(255, 184, 28, 0.5);
 }
 
