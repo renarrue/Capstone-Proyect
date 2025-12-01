@@ -62,7 +62,7 @@ RESUMEN OFICIAL DE FECHAS CLAVE 2026 (Usar esta información con prioridad):
    - Semana Santa: 03 y 04 de Abril.
    - Día del Trabajador: 01 de Mayo.
    - Glorias Navales: 21 de Mayo.
-   - Vacaciones de Invierno (Receso): Del 24 de Julio al 08 de Agosto.
+   - Vacaciones de Invierno: Del 24 de Julio al 08 de Agosto.
    - Fiestas Patrias: 18 y 19 de Septiembre.
 """
 
