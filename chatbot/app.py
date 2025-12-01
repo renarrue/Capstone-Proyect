@@ -269,7 +269,7 @@ def inicializar_cadena(language_code):
     
     base_instruction = TEXTS[language_code]["system_prompt"]
     
-    # 4. PROMPT HÍBRIDO (Reglas + Fechas)
+    # 4. PROMPT HÍBRIDO MEJORADO (Sin firma fantasma)
     prompt_template = base_instruction + """
     REGLAS IMPORTANTES:
     1. Dirígete a {user_name} por su nombre.
@@ -281,6 +281,10 @@ def inicializar_cadena(language_code):
        - Si la pregunta es sobre **Fechas, Plazos, Inicio de Clases o Feriados**: Basa tu respuesta en el 'Calendario Académico'. Indica claramente la fecha.
     
     5. Si la información no está en ninguno de los documentos, di honestamente que no tienes esa información.
+    
+    6. FIRMA Y DESPEDIDA:
+       - NO uses marcadores como "[Tu nombre]" o "[Su nombre]".
+       - Despídete simplemente con "Saludos" o firma como "Tu Asistente Virtual Duoc UC".
 
     CONTEXTO:
     {context}
