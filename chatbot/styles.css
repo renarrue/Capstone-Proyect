@@ -2,6 +2,7 @@
 ================================================
   CHATBOT DUOC UC - ESTILOS PROFESIONALES V2.0
   Diseño moderno con glassmorphism y animaciones
+  [ACTUALIZADO: Fix contraste botones amarillos]
 ================================================
 */
 
@@ -250,26 +251,76 @@ a:hover {
     box-shadow: var(--shadow-sm);
 }
 
-/* SOLUCIÓN: Botón primario con texto oscuro */
+/* =============================================
+   7.1. BOTONES PRIMARIOS - FIX CONTRASTE
+   ============================================= */
+
+/* Botón primario con texto oscuro - VERSIÓN REFORZADA */
 .stButton > button[kind="primary"],
-.stButton > button[data-testid*="anular"],
-.stButton > button[data-testid*="inscribir"] {
-    background: linear-gradient(135deg, var(--duoc-yellow) 0%, var(--duoc-yellow-dark) 100%);
+.stButton > button[type="primary"],
+button[kind="primary"],
+button[type="primary"],
+button[data-testid*="baseButton-primary"],
+button[class*="primary"],
+div[data-testid="stButton"] button[kind="primary"],
+div[data-testid="stButton"] button[type="primary"] {
+    background: linear-gradient(135deg, var(--duoc-yellow) 0%, var(--duoc-yellow-dark) 100%) !important;
     
-    /* CAMBIO CLAVE: Texto azul oscuro en lugar de blanco */
-    color: var(--duoc-blue-dark) !important;  /* #001529 */
+    /* TEXTO AZUL OSCURO - ALTO CONTRASTE */
+    color: var(--duoc-blue-dark) !important;
     
-    border-color: transparent;
-    font-weight: 700;
+    border: 2px solid var(--duoc-blue) !important;
+    border-color: var(--duoc-blue) !important;
+    font-weight: 700 !important;
     
     /* Sombra de texto para más legibilidad */
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3) !important;
 }
 
-.stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, var(--duoc-yellow-dark) 0%, var(--duoc-yellow) 100%);
+/* Hover en botones primarios */
+.stButton > button[kind="primary"]:hover,
+.stButton > button[type="primary"]:hover,
+button[kind="primary"]:hover,
+button[type="primary"]:hover {
+    background: linear-gradient(135deg, var(--duoc-yellow-dark) 0%, var(--duoc-yellow) 100%) !important;
     color: var(--duoc-blue-dark) !important;
-    box-shadow: 0 0 25px rgba(255, 184, 28, 0.5);
+    border-color: var(--duoc-blue-dark) !important;
+    box-shadow: 0 0 25px rgba(255, 184, 28, 0.5) !important;
+    transform: translateY(-2px);
+}
+
+/* Active state */
+.stButton > button[kind="primary"]:active,
+.stButton > button[type="primary"]:active {
+    transform: translateY(0);
+}
+
+/* Específico para botones dentro de expanders */
+.streamlit-expanderContent button,
+.streamlit-expanderContent .stButton > button,
+div[class*="expanderContent"] button {
+    color: var(--duoc-blue-dark) !important;
+    font-weight: 700 !important;
+}
+
+/* Catch-all: cualquier botón con fondo amarillo */
+button[style*="background"][style*="255, 184, 28"],
+button[style*="background"][style*="FFB81C"],
+button[style*="background-color"][style*="255, 184, 28"],
+button[style*="background-color"][style*="FFB81C"] {
+    color: var(--duoc-blue-dark) !important;
+    font-weight: 700 !important;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Forzar en todos los span dentro de botones primarios */
+button[kind="primary"] span,
+button[type="primary"] span,
+button[kind="primary"] p,
+button[type="primary"] p,
+button[kind="primary"] div,
+button[type="primary"] div {
+    color: var(--duoc-blue-dark) !important;
 }
 
 /* Botón secundario */
