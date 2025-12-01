@@ -1,4 +1,4 @@
-# Versión 26.0 (FINAL: Multi-Documento Reglamento + Calendario + CSS Fix)
+# Versión 27.0 (FINAL: Fix Lectura Tablas PDF + k=12 + Prompt Desencriptador)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -260,42 +260,42 @@ def inicializar_cadena(language_code):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vector_store = Chroma.from_documents(docs_procesados, embeddings)
     
-    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
+    # --- CAMBIO CRÍTICO: AUMENTO DE K PARA LEER TABLAS ---
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 12}) # Antes 7
     bm25_retriever = BM25Retriever.from_documents(docs_procesados)
-    bm25_retriever.k = 7
+    bm25_retriever.k = 12 # Antes 7
+    # ----------------------------------------------------
     
     retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
     llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
     
     base_instruction = TEXTS[language_code]["system_prompt"]
     
-   # 4. PROMPT MAESTRO V2 (Anti-Placeholders)
+    # 4. PROMPT ESPECIALIZADO EN TABLAS PDF
     prompt_template = base_instruction + """
-    ROL:
-    Eres el "Asistente Académico Virtual de Duoc UC". Tu tono es profesional, cercano y resolutivo.
+    ROL: Asistente Académico experto en leer calendarios y reglamentos.
 
-    REGLAS DE ORO (OBLIGATORIAS):
-    1. **PROHIBIDO USAR MARCADORES DE POSICIÓN**: Nunca respondas con "[Insertar fecha]" o "[Fecha de inicio]". Si no encuentras el dato exacto en el texto, NO escribas esa línea.
-    2. **Interpretación de Fechas**: Si en el texto ves "09-03-2026", tradúcelo a "09 de Marzo de 2026".
-    3. **Formato**: Usa **negritas** para las fechas y conceptos clave.
+    INSTRUCCIONES DE LECTURA (CRÍTICO):
+    1. El texto del Calendario proviene de una tabla PDF y puede verse desordenado.
+    2. Busca activamente fechas con formato "dd-mm-aaaa" (ej: 09-03-2026) cercanas a las palabras clave.
+    3. Si ves abreviaturas como "lun", "mar", "mie", "jue", "vie", "sab", ignóralas y toma la fecha numérica.
+    4. ATENCIÓN: 
+       - "Inicio de Clases 1er Semestre" suele ser en MARZO.
+       - "Inicio de Clases 2do Semestre" suele ser en AGOSTO.
+       - "Exámenes" suelen ser en JULIO (1er sem) y DICIEMBRE (2do sem).
 
-    INSTRUCCIONES DE BÚSQUEDA:
-    1. Si te piden "fechas importantes", escanea el contexto buscando números asociados a:
-       - "Inicio de Clases" o "Temporada Académica Ordinaria".
-       - "Semana Cero" o "Inducción".
-       - "Exámenes".
-       - "Feriados".
-    2. Si encuentras la fecha, escríbela. Si NO la encuentras, ignora ese punto.
-
+    REGLAS DE RESPUESTA:
+    1. Si encuentras la fecha, dila con seguridad (Ej: "**09 de Marzo de 2026**").
+    2. Si te preguntan "Fechas Importantes", extrae y lista: Inicio de Clases, Semana Cero, Exámenes y Feriados.
+    3. Si la pregunta es sobre reglas (notas, asistencia), usa el Reglamento.
+    
     FIRMA:
     - Despídete como "Tu Asistente Virtual Duoc UC".
 
-    CONTEXTO (Aquí está la información real, úsala):
+    CONTEXTO:
     {context}
     
-    PREGUNTA DE {user_name}:
-    {input}
-    
+    PREGUNTA DE {user_name}: {input}
     RESPUESTA:
     """
     prompt = ChatPromptTemplate.from_template(prompt_template)
