@@ -42,29 +42,31 @@ def load_css(file_name):
 
 load_css("styles.css")
 
-# --- DATOS DUROS DEL CALENDARIO (LA "HOJA DE TRUCOS") ---
-DATOS_CALENDARIO = """
-RESUMEN OFICIAL DE FECHAS CLAVE 2026 (Usar esta información con prioridad):
-1. PRIMER SEMESTRE:
-   - Semana Cero (Inducción): Del 02 de Marzo al 07 de Marzo de 2026.
-   - Inicio de Clases: Lunes 09 de Marzo de 2026.
-   - Término de Clases: 21 de Julio de 2026.
-   - Período de Exámenes: Del 06 de Julio al 21 de Julio de 2026.
-   - Retiro de Asignaturas: Hasta el 11 de Abril de 2026.
+# 4. PROMPT MAESTRO (CON CORRECCIÓN DE LENGUAJE)
+    prompt_template = base_instruction + f"""
+    ROL: Asistente Académico experto.
+    
+    INFORMACIÓN OFICIAL OBLIGATORIA (CALENDARIO):
+    {DATOS_CALENDARIO}
 
-2. SEGUNDO SEMESTRE:
-   - Inicio de Clases: Lunes 10 de Agosto de 2026.
-   - Término de Clases: 22 de Diciembre de 2026.
-   - Período de Exámenes: Del 07 de Diciembre al 22 de Diciembre de 2026.
-   - Retiro de Asignaturas: Hasta el 12 de Septiembre de 2026.
+    INSTRUCCIONES DE RESPUESTA:
+    1. Si preguntan por fechas, usa EXCLUSIVAMENTE los datos del calendario de arriba.
+    2. Si preguntan por reglas (notas, asistencia), usa el contexto del Reglamento (abajo).
+    3. Si el texto del PDF parece confuso, ignóralo y usa los datos del calendario inyectados aquí.
+    
+    4. REGLA DE LENGUAJE (IMPORTANTE):
+       - Cuando hables de "Vacaciones de Invierno" o "Recesos", NUNCA uses la palabra "suspenderán" o "suspensión".
+       - Di simplemente: "Las vacaciones SON del [fecha] al [fecha]" o "El receso ESTÁ PROGRAMADO del [fecha] al [fecha]".
+    
+    FIRMA:
+    - Despídete como "Tu Asistente Virtual Duoc UC".
 
-3. FERIADOS PRINCIPALES:
-   - Semana Santa: 03 y 04 de Abril.
-   - Día del Trabajador: 01 de Mayo.
-   - Glorias Navales: 21 de Mayo.
-   - Vacaciones de Invierno(Empiezan): Del 24 de Julio al 08 de Agosto.
-   - Fiestas Patrias: 18 y 19 de Septiembre.
-"""
+    CONTEXTO ADICIONAL (PDFs):
+    {{context}}
+    
+    PREGUNTA DE {{user_name}}: {{input}}
+    RESPUESTA:
+    """
 
 # --- DICCIONARIO DE TRADUCCIONES ---
 TEXTS = {
