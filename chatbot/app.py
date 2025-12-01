@@ -1,4 +1,4 @@
-# Versión 28.2 (FINAL: Fix Indentación + Estructura Correcta)
+# Versión 29.0 (FINAL: Fix API Error + Inyección de Datos + K Optimizado)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -276,10 +276,10 @@ def inicializar_cadena(language_code):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vector_store = Chroma.from_documents(docs_procesados, embeddings)
     
-    # K=12 para leer tablas complejas
-    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 12})
+    # --- K OPTIMIZADO: K=5 para evitar error de API ---
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 5})
     bm25_retriever = BM25Retriever.from_documents(docs_procesados)
-    bm25_retriever.k = 12
+    bm25_retriever.k = 5
     
     retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
     llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
@@ -287,7 +287,6 @@ def inicializar_cadena(language_code):
     base_instruction = TEXTS[language_code]["system_prompt"]
     
     # 4. PROMPT MAESTRO (CON INYECCIÓN SEGURA)
-    # Aquí inyectamos el calendario usando f-string dentro de la inicialización
     prompt_template = base_instruction + f"""
     ROL: Asistente Académico experto.
     
