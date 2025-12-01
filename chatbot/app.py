@@ -1,98 +1,28 @@
-"""
-================================================
-CHATBOT ACADÉMICO DUOC UC - VERSIÓN MEJORADA
-================================================
-Autor: Rena
-Fecha: Diciembre 2024
-Versión: 2.0 (Con mejoras implementadas)
-
-MEJORAS INCLUIDAS:
-1. ✅ Validaciones de seguridad (email @duocuc.cl, contraseñas fuertes)
-2. ✅ Sistema de logging profesional
-3. ✅ Exportar horario (PDF + ICS/Google Calendar)
-4. ✅ Dashboard de estadísticas
-5. ✅ Confirmaciones mejoradas
-6. ✅ Cache optimizado
-7. ✅ Citas de artículos en RAG
-8. ✅ Rate limiting admin
-9. ✅ Loading states
-10. ✅ Easter eggs y saludos personalizados
-================================================
-"""
-
-# =============================================
-# IMPORTS
-# =============================================
+# Versión 28.2 (FINAL: Fix Indentación + Estructura Correcta)
 import streamlit as st
-import os
-import bcrypt
-import time
-import re
-import random
-import logging
-import pandas as pd
-from datetime import datetime, timedelta
-from io import BytesIO
-
-# Supabase
-from supabase import create_client, Client
-
-# LangChain y RAG
 from langchain_groq import ChatGroq
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.retrievers import BM25Retriever, EnsembleRetriever
+import os
+from supabase import create_client, Client
+import streamlit_authenticator as stauth
+import time
+from datetime import time as dt_time
+import bcrypt
+import pandas as pd
 
-# Exportar PDF
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.units import inch
-
-# Exportar ICS (Google Calendar)
-from icalendar import Calendar, Event as ICalEvent
-
-# =============================================
-# CONFIGURACIÓN DE LOGGING
-# =============================================
-def setup_logging():
-    """Configura sistema de logging profesional"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(message)s',
-        handlers=[
-            logging.FileHandler('chatbot_duoc.log'),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
-
-logger = setup_logging()
-logger.info("=" * 50)
-logger.info("🚀 Iniciando Chatbot Duoc UC")
-logger.info("=" * 50)
-
-# =============================================
-# VARIABLES GLOBALES
-# =============================================
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DUOC2025")  # Cambiar en producción
-
-# URLs del logo
+# --- URLs DE LOGOS ---
 LOGO_BANNER_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Logo_DuocUC.svg/2560px-Logo_DuocUC.svg.png"
 LOGO_ICON_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSlve2kMlU53cq9Tl0DMxP0Ffo0JNap2dXq4q_uSdf4PyFZ9uraw7MU5irI6mA-HG8byNI&usqp=CAU"
 
-# =============================================
-# CONFIGURACIÓN DE PÁGINA
-# =============================================
+# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
     page_title="Chatbot Duoc UC",
     page_icon=LOGO_ICON_URL,
@@ -100,1022 +30,682 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# =============================================
-# CARGAR CSS
-# =============================================
+# --- CARGAR CSS ---
 def load_css(file_name):
-    """Carga archivo CSS personalizado"""
+    directorio_actual = os.path.dirname(os.path.abspath(__file__))
+    ruta_css = os.path.join(directorio_actual, file_name)
     try:
-        with open(file_name) as f:
+        with open(ruta_css) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-        logger.info("✅ CSS cargado exitosamente")
     except FileNotFoundError:
-        st.warning(f"⚠️ Archivo CSS no encontrado: {file_name}")
-        logger.warning(f"⚠️ CSS no encontrado: {file_name}")
+        st.error(f"⚠️ Error: No se encontró el estilo en: {ruta_css}")
 
 load_css("styles.css")
 
-# =============================================
-# FUNCIONES DE VALIDACIÓN Y SEGURIDAD
-# =============================================
+# --- DATOS DUROS DEL CALENDARIO (LA "HOJA DE TRUCOS") ---
+DATOS_CALENDARIO = """
+RESUMEN OFICIAL DE FECHAS CLAVE 2026 (Usar esta información con prioridad):
+1. PRIMER SEMESTRE:
+   - Semana Cero (Inducción): Del 02 de Marzo al 07 de Marzo de 2026.
+   - Inicio de Clases: Lunes 09 de Marzo de 2026.
+   - Término de Clases: 21 de Julio de 2026.
+   - Período de Exámenes: Del 06 de Julio al 21 de Julio de 2026.
+   - Retiro de Asignaturas: Hasta el 11 de Abril de 2026.
 
-def validar_email_duoc(email):
-    """Valida que el email sea institucional @duocuc.cl"""
-    pattern = r'^[a-zA-Z0-9._%+-]+@duocuc\.cl$'
-    return re.match(pattern, email) is not None
+2. SEGUNDO SEMESTRE:
+   - Inicio de Clases: Lunes 10 de Agosto de 2026.
+   - Término de Clases: 22 de Diciembre de 2026.
+   - Período de Exámenes: Del 07 de Diciembre al 22 de Diciembre de 2026.
+   - Retiro de Asignaturas: Hasta el 12 de Septiembre de 2026.
 
-def validar_password_fuerte(password):
-    """
-    Valida contraseña fuerte:
-    - Mínimo 8 caracteres
-    - Al menos 1 mayúscula, 1 minúscula, 1 número, 1 símbolo
-    """
-    if len(password) < 8:
-        return False, "La contraseña debe tener al menos 8 caracteres"
-    if not re.search(r'[A-Z]', password):
-        return False, "Debe incluir al menos una mayúscula"
-    if not re.search(r'[a-z]', password):
-        return False, "Debe incluir al menos una minúscula"
-    if not re.search(r'\d', password):
-        return False, "Debe incluir al menos un número"
-    if not re.search(r'[@$!%*?&]', password):
-        return False, "Debe incluir al menos un símbolo (@$!%*?&)"
-    return True, ""
+3. FERIADOS Y RECESOS:
+   - Semana Santa: 03 y 04 de Abril.
+   - Día del Trabajador: 01 de Mayo.
+   - Glorias Navales: 21 de Mayo.
+   - Vacaciones de Invierno (Receso): Del 24 de Julio al 08 de Agosto.
+   - Fiestas Patrias: 18 y 19 de Septiembre.
+"""
 
-def check_admin_rate_limit():
-    """
-    Verifica intentos de acceso admin.
-    Lockout después de 3 intentos fallidos por 5 minutos.
-    """
-    if "admin_attempts" not in st.session_state:
-        st.session_state.admin_attempts = 0
-        st.session_state.admin_lockout_until = None
-    
-    if st.session_state.admin_lockout_until:
-        ahora = datetime.now()
-        if ahora < st.session_state.admin_lockout_until:
-            segundos_restantes = (st.session_state.admin_lockout_until - ahora).seconds
-            return False, f"⛔ Demasiados intentos. Bloqueado por {segundos_restantes} segundos"
-        else:
-            st.session_state.admin_attempts = 0
-            st.session_state.admin_lockout_until = None
-    
-    return True, ""
-
-def registrar_intento_admin(exitoso):
-    """Registra intento de acceso admin"""
-    if exitoso:
-        st.session_state.admin_attempts = 0
-        st.session_state.admin_lockout_until = None
-        logger.info("🔓 Acceso admin exitoso")
-    else:
-        st.session_state.admin_attempts += 1
-        logger.warning(f"🔒 Intento admin fallido (intento #{st.session_state.admin_attempts})")
-        
-        if st.session_state.admin_attempts >= 3:
-            st.session_state.admin_lockout_until = datetime.now() + timedelta(minutes=5)
-            logger.warning("⛔ Admin bloqueado por 5 minutos")
-
-# =============================================
-# FUNCIONES DE UX
-# =============================================
-
-def mostrar_confirmacion(mensaje, tipo="success"):
-    """Muestra confirmación con estilo mejorado"""
-    iconos = {
-        "success": "✅",
-        "error": "❌",
-        "warning": "⚠️",
-        "info": "ℹ️"
-    }
-    
-    icono = iconos.get(tipo, "ℹ️")
-    
-    if tipo == "success":
-        st.success(f"{icono} {mensaje}")
-    elif tipo == "error":
-        st.error(f"{icono} {mensaje}")
-    elif tipo == "warning":
-        st.warning(f"{icono} {mensaje}")
-    else:
-        st.info(f"{icono} {mensaje}")
-
-def obtener_saludo_hora():
-    """Saludo personalizado según hora del día"""
-    hora = datetime.now().hour
-    
-    if 5 <= hora < 12:
-        saludos = [
-            "☀️ ¡Buenos días!",
-            "🌅 ¡Buen día!",
-            "☕ ¡Buenos días! ¿Ya tomaste café?"
-        ]
-    elif 12 <= hora < 19:
-        saludos = [
-            "☀️ ¡Buenas tardes!",
-            "😊 ¡Hola! ¿Cómo va tu día?",
-            "📚 ¡Buenas tardes! Hora de estudiar"
-        ]
-    else:
-        saludos = [
-            "🌙 ¡Buenas noches!",
-            "✨ ¡Hola! Estudiando de noche, ¿eh?",
-            "🦉 ¡Búho nocturno detectado!"
-        ]
-    
-    return random.choice(saludos)
-
-# =============================================
-# FUNCIONES DE EXPORTACIÓN
-# =============================================
-
-def generar_pdf_horario(sections, user_name):
-    """Genera PDF del horario del estudiante"""
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
-    styles = getSampleStyleSheet()
-    
-    # Título
-    title = Paragraph(f"<b>Horario Académico - {user_name}</b>", styles['Title'])
-    elements.append(title)
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Subtítulo
-    subtitle = Paragraph(
-        f"<i>Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}</i>",
-        styles['Normal']
-    )
-    elements.append(subtitle)
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Tabla de horario
-    data = [['Asignatura', 'Sección', 'Día', 'Horario', 'Profesor']]
-    
-    for section in sections:
-        data.append([
-            section.get('subject_name', 'N/A'),
-            section.get('code', 'N/A'),
-            section.get('day', 'N/A'),
-            f"{section.get('start_time', 'N/A')}-{section.get('end_time', 'N/A')}",
-            section.get('professor', 'N/A')
-        ])
-    
-    table = Table(data, colWidths=[2*inch, 0.8*inch, 1*inch, 1.2*inch, 1.5*inch])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#002342')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    
-    elements.append(table)
-    elements.append(Spacer(1, 0.5*inch))
-    
-    # Footer
-    footer = Paragraph(
-        "<i>Duoc UC - Sistema de Gestión Académica</i>",
-        styles['Normal']
-    )
-    elements.append(footer)
-    
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
-
-def generar_ics_horario(sections, user_name):
-    """Genera archivo ICS para importar a Google Calendar"""
-    cal = Calendar()
-    cal.add('prodid', '-//Chatbot Duoc UC//mxm.dk//')
-    cal.add('version', '2.0')
-    cal.add('x-wr-calname', f'Horario {user_name}')
-    
-    # Mapeo días a números (Lunes = 0)
-    dias = {
-        'Lunes': 0, 'Monday': 0,
-        'Martes': 1, 'Tuesday': 1,
-        'Miércoles': 2, 'Wednesday': 2,
-        'Jueves': 3, 'Thursday': 3,
-        'Viernes': 4, 'Friday': 4,
-        'Sábado': 5, 'Saturday': 5
-    }
-    
-    # Fecha de inicio del semestre (ajustar según corresponda)
-    inicio_semestre = datetime(2025, 3, 3)  # Ejemplo: 3 de marzo 2025
-    
-    for section in sections:
-        event = ICalEvent()
-        event.add('summary', f"{section.get('subject_name', 'Clase')} ({section.get('code', 'N/A')})")
-        event.add('description', f"Profesor: {section.get('professor', 'N/A')}")
-        event.add('location', 'Duoc UC - Sede Padre Alonso de Ovalle')
-        
-        # Calcular fecha/hora del primer día
-        dia_nombre = section.get('day', 'Lunes')
-        dia_numero = dias.get(dia_nombre, 0)
-        primer_dia = inicio_semestre + timedelta(days=(dia_numero - inicio_semestre.weekday()) % 7)
-        
-        try:
-            hora_inicio = datetime.strptime(section.get('start_time', '08:00'), '%H:%M').time()
-            hora_fin = datetime.strptime(section.get('end_time', '10:00'), '%H:%M').time()
-        except:
-            hora_inicio = datetime.strptime('08:00', '%H:%M').time()
-            hora_fin = datetime.strptime('10:00', '%H:%M').time()
-        
-        dtstart = datetime.combine(primer_dia, hora_inicio)
-        dtend = datetime.combine(primer_dia, hora_fin)
-        
-        event.add('dtstart', dtstart)
-        event.add('dtend', dtend)
-        
-        # Recurrencia semanal por 16 semanas (un semestre)
-        event.add('rrule', {'freq': 'weekly', 'count': 16})
-        
-        cal.add_component(event)
-    
-    return cal.to_ical()
-
-def resaltar_articulos(texto):
-    """Resalta las citas de artículos en la respuesta del RAG"""
-    patron = r'(Artículo N°\d+|Art\. \d+|Article \d+)'
-    texto_resaltado = re.sub(patron, r'**\1**', texto)
-    return texto_resaltado
-
-# =============================================
-# TEXTOS MULTIIDIOMA
-# =============================================
+# --- DICCIONARIO DE TRADUCCIONES ---
 TEXTS = {
     "es": {
-        "system_prompt": "Eres un coordinador académico de Duoc UC. Tu función es ayudar a los estudiantes con dudas sobre el reglamento académico.",
-        "welcome": "Bienvenido al Chatbot Académico de Duoc UC",
-        "chat_input": "Escribe tu pregunta sobre el reglamento académico...",
+        "label": "Español 🇨🇱",
+        "title": "Asistente Académico Duoc UC",
+        "sidebar_lang": "Idioma / Language",
+        "login_success": "Usuario:",
+        "logout_btn": "Cerrar Sesión",
+        "tab1": "💬 Chatbot Académico",
+        "tab2": "📅 Inscripción de Asignaturas",
+        "tab3": "🔐 Admin / Auditoría",
         "login_title": "Iniciar Sesión",
-        "login_user": "Correo electrónico",
+        "login_user": "Correo Institucional",
         "login_pass": "Contraseña",
         "login_btn": "Ingresar",
-        "login_success": "Bienvenido/a",
-        "login_error": "Usuario o contraseña incorrectos",
-        "reg_title": "Registrarse",
-        "reg_name": "Nombre completo",
-        "reg_email": "Correo institucional",
-        "reg_pass": "Contraseña",
-        "reg_btn": "Crear cuenta",
-        "reg_success": "Cuenta creada exitosamente. Ya puedes iniciar sesión.",
-        "admin_pass_label": "Contraseña de administrador",
-        "tab_chat": "💬 Chatbot Académico",
-        "tab_enrollment": "📚 Inscripción de Asignaturas",
-        "tab_admin": "🔐 Admin / Auditoría"
+        "login_failed": "❌ Credenciales inválidas",
+        "login_welcome": "¡Bienvenido al Asistente!",
+        "chat_clear_btn": "🧹 Limpiar Conversación",
+        "chat_cleaning": "Procesando solicitud...",
+        "chat_cleaned": "¡Historial limpiado!",
+        "chat_welcome": "¡Hola **{name}**! 👋 Soy tu asistente virtual. Pregúntame sobre el reglamento, fechas importantes o asistencia.",
+        "chat_welcome_clean": "¡Hola **{name}**! Historial archivado. ¿En qué más te ayudo?",
+        "chat_placeholder": "Ej: ¿Cuándo empiezan las clases?",
+        "chat_thinking": "Consultando documentos...",
+        "feedback_thanks": "¡Gracias por tu feedback! 👍",
+        "feedback_report_sent": "Reporte enviado.",
+        "feedback_modal_title": "¿Qué podemos mejorar?",
+        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta...",
+        "btn_send": "Enviar Comentario",
+        "btn_cancel": "Omitir",
+        "enroll_title": "Toma de Ramos 2025",
+        "filter_career": "📂 Filtrar por Carrera:",
+        "filter_sem": "⏳ Filtrar por Semestre:",
+        "filter_all": "Todas las Carreras",
+        "filter_all_m": "Todos los Semestres",
+        "reset_btn": "🔄 Limpiar Filtros",
+        "search_label": "📚 Buscar Asignatura:",
+        "search_placeholder": "Escribe el nombre del ramo...",
+        "sec_title": "Secciones Disponibles para:",
+        "btn_enroll": "Inscribir",
+        "btn_full": "Sin Cupos",
+        "msg_enrolled": "✅ ¡Asignatura inscrita exitosamente!",
+        "msg_conflict": "⛔ Error: Tope de Horario detectado",
+        "msg_already": "ℹ️ Ya estás inscrito en esta asignatura.",
+        "my_schedule": "Tu Carga Académica",
+        "no_schedule": "No tienes ramos inscritos.",
+        "btn_drop": "Anular Ramo",
+        "msg_dropped": "Asignatura eliminada de tu carga.",
+        "admin_title": "Panel de Control (Admin)",
+        "admin_pass_label": "Clave de Acceso:",
+        "admin_success": "Acceso Autorizado",
+        "admin_info": "Registro de interacciones y feedback negativo.",
+        "admin_update_btn": "🔄 Refrescar Datos",
+        "col_date": "Fecha/Hora",
+        "col_status": "Estado",
+        "col_q": "Pregunta Estudiante",
+        "col_a": "Respuesta IA",
+        "col_val": "Eval",
+        "col_com": "Detalle",
+        "reg_header": "Crear Cuenta Alumno",
+        "reg_name": "Nombre y Apellido",
+        "reg_email": "Correo Duoc",
+        "reg_pass": "Crear Contraseña",
+        "reg_btn": "Registrarse",
+        "reg_success": "¡Cuenta creada! Accede desde el Login.",
+        "auth_error": "Verifica tus datos.",
+        "sug_header": "💡 **¿No sabes qué preguntar? Prueba con esto:**",
+        "sug_btn1": "📅 Inicio de Clases",
+        "sug_query1": "¿Cuándo comienzan las clases este semestre?",
+        "sug_btn2": "🎓 Requisitos Titulación",
+        "sug_query2": "¿Cuáles son los requisitos para titularme?",
+        "sug_btn3": "📋 Justificar Inasistencia",
+        "sug_query3": "¿Cómo justifico una inasistencia?",
+        "system_prompt": "INSTRUCCIÓN: Responde en Español formal pero cercano. ROL: Eres un coordinador académico de Duoc UC."
     },
     "en": {
-        "system_prompt": "You are an academic coordinator at Duoc UC. Your role is to help students with questions about academic regulations.",
-        "welcome": "Welcome to Duoc UC Academic Chatbot",
-        "chat_input": "Write your question about academic regulations...",
-        "login_title": "Login",
-        "login_user": "Email",
+        "label": "English 🇺🇸",
+        "title": "Duoc UC Academic Assistant",
+        "sidebar_lang": "Language / Idioma",
+        "login_success": "User:",
+        "logout_btn": "Log Out",
+        "tab1": "💬 Academic Chat",
+        "tab2": "📅 Course Enrollment",
+        "tab3": "🔐 Admin / Audit",
+        "login_title": "Student Login",
+        "login_user": "Institutional Email",
         "login_pass": "Password",
-        "login_btn": "Sign in",
-        "login_success": "Welcome",
-        "login_error": "Incorrect username or password",
-        "reg_title": "Register",
-        "reg_name": "Full name",
-        "reg_email": "Institutional email",
-        "reg_pass": "Password",
-        "reg_btn": "Create account",
-        "reg_success": "Account created successfully. You can now sign in.",
-        "admin_pass_label": "Administrator password",
-        "tab_chat": "💬 Academic Chatbot",
-        "tab_enrollment": "📚 Course Enrollment",
-        "tab_admin": "🔐 Admin / Audit"
+        "login_btn": "Login",
+        "login_failed": "❌ Invalid credentials",
+        "login_welcome": "Welcome to the Assistant!",
+        "chat_clear_btn": "🧹 Clear Conversation",
+        "chat_cleaning": "Processing...",
+        "chat_cleaned": "History cleared!",
+        "chat_welcome": "Hello **{name}**! 👋 I'm your Duoc UC assistant. Ask me about rules, dates, or grades.",
+        "chat_welcome_clean": "Hello **{name}**! History archived. Can I help with anything else?",
+        "chat_placeholder": "Ex: When do classes start?",
+        "chat_thinking": "Consulting documents...",
+        "feedback_thanks": "Thanks for your feedback! 👍",
+        "feedback_report_sent": "Report sent.",
+        "feedback_modal_title": "What went wrong?",
+        "feedback_modal_placeholder": "Ex: The date is wrong...",
+        "btn_send": "Send Comment",
+        "btn_cancel": "Skip",
+        "enroll_title": "Course Registration 2025",
+        "filter_career": "📂 Filter by Career:",
+        "filter_sem": "⏳ Filter by Semester:",
+        "filter_all": "All Careers",
+        "filter_all_m": "All Semesters",
+        "reset_btn": "🔄 Clear Filters",
+        "search_label": "📚 Search Subject:",
+        "search_placeholder": "Type subject name...",
+        "sec_title": "Available Sections for:",
+        "btn_enroll": "Enroll",
+        "btn_full": "Full",
+        "msg_enrolled": "✅ Subject enrolled successfully!",
+        "msg_conflict": "⛔ Error: Schedule Conflict",
+        "msg_already": "ℹ️ You are already enrolled.",
+        "my_schedule": "Your Academic Load",
+        "no_schedule": "No subjects enrolled.",
+        "btn_drop": "Drop Course",
+        "msg_dropped": "Subject removed from load.",
+        "admin_title": "Control Panel (Admin)",
+        "admin_pass_label": "Access Key:",
+        "admin_success": "Access Granted",
+        "admin_info": "Log of interactions and negative feedback.",
+        "admin_update_btn": "🔄 Refresh Data",
+        "col_date": "Date/Time",
+        "col_status": "Status",
+        "col_q": "Student Question",
+        "col_a": "AI Answer",
+        "col_val": "Rate",
+        "col_com": "Detail",
+        "reg_header": "Create Student Account",
+        "reg_name": "Full Name",
+        "reg_email": "Duoc Email",
+        "reg_pass": "Create Password",
+        "reg_btn": "Register",
+        "reg_success": "Account created! Please login.",
+        "auth_error": "Check your credentials.",
+        "sug_header": "💡 **Don't know what to ask? Try this:**",
+        "sug_btn1": "📅 Class Start Date",
+        "sug_query1": "When do classes start this semester?",
+        "sug_btn2": "🎓 Graduation Reqs",
+        "sug_query2": "What are the requirements for graduation?",
+        "sug_btn3": "📋 Justify Absence",
+        "sug_query3": "How do I justify an absence?",
+        "system_prompt": "INSTRUCTION: Respond in English, formal but friendly. ROLE: You are an academic coordinator at Duoc UC."
     }
 }
 
-# Easter eggs
-EASTER_EGGS = {
-    "hola": "¡Hola! 👋 Soy tu asistente académico. Pregúntame sobre el reglamento de Duoc UC",
-    "gracias": "¡De nada! 😊 Estoy aquí para ayudarte",
-    "chiste": "¿Por qué el libro de matemáticas está triste? ¡Porque tiene muchos problemas! 😄",
-    "café": "☕ Lo siento, no puedo darte café... pero puedo responder tus dudas académicas! 😊",
-    "ayuda": "🤔 Puedes preguntarme sobre notas, asistencia, inscripción, evaluaciones y todo el reglamento académico de Duoc UC"
-}
+# --- CARGA DE CLAVES ---
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "DUOC2025")
 
-# =============================================
-# INICIALIZAR SUPABASE
-# =============================================
+if not GROQ_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("Error: Faltan claves de API. Verifica tus Secrets.")
+    st.stop()
+
+# --- SUPABASE ---
 @st.cache_resource
 def init_supabase_client():
-    """Inicializa cliente de Supabase"""
-    try:
-        client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("✅ Cliente Supabase inicializado")
-        return client
-    except Exception as e:
-        logger.error(f"❌ Error inicializando Supabase: {e}")
-        st.error("Error de conexión a la base de datos")
-        return None
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase_client()
 
-# =============================================
-# FUNCIONES DE CACHE OPTIMIZADO
-# =============================================
+# --- STREAMING ---
+def stream_data(text):
+    for word in text.split(" "):
+        yield word + " "
+        time.sleep(0.02)
 
-@st.cache_data(ttl=86400)  # 24 horas - data estática
-def get_all_subjects():
-    """Obtiene catálogo completo de asignaturas"""
-    try:
-        response = supabase.table('subjects').select('*').execute()
-        logger.info(f"📚 Cargadas {len(response.data)} asignaturas")
-        return response.data
-    except Exception as e:
-        logger.error(f"❌ Error cargando asignaturas: {e}")
-        return []
-
-@st.cache_data(ttl=300)  # 5 minutos - data dinámica
-def get_user_schedule(user_id):
-    """Obtiene horario del usuario"""
-    try:
-        response = supabase.table('registrations')\
-            .select('*, sections(*, subjects(*))')\
-            .eq('user_id', user_id)\
-            .execute()
-        return response.data
-    except Exception as e:
-        logger.error(f"❌ Error cargando horario: {e}")
-        return []
-
-@st.cache_data(ttl=60)  # 1 minuto - data muy dinámica
-def get_available_sections():
-    """Obtiene secciones disponibles"""
-    try:
-        response = supabase.table('sections').select('*').execute()
-        return response.data
-    except Exception as e:
-        logger.error(f"❌ Error cargando secciones: {e}")
-        return []
-
-# =============================================
-# INICIALIZAR MOTOR RAG CON MEJORAS
-# =============================================
+# --- CHATBOT ENGINE (MULTI-DOCUMENTO CON INYECCIÓN) ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    """
-    Inicializa motor RAG con:
-    - Retrieval híbrido (BM25 + Vector)
-    - Prompt mejorado con instrucciones de citas
-    """
-    try:
-        logger.info("🔧 Inicializando motor RAG...")
-        
-        # 1. Cargar PDF
-        with st.spinner("📄 Cargando reglamento académico..."):
-            loader = PyPDFLoader("reglamento.pdf")
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-            docs = loader.load_and_split(text_splitter=text_splitter)
-            logger.info(f"📄 PDF cargado: {len(docs)} chunks")
-        
-        # 2. Embeddings
-        with st.spinner("🧠 Generando embeddings..."):
-            embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            vector_store = Chroma.from_documents(docs, embeddings)
-            logger.info("🧠 Embeddings generados")
-        
-        # 3. Retrievers
-        vector_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
-        bm25_retriever = BM25Retriever.from_documents(docs)
-        bm25_retriever.k = 7
-        
-        # Ensemble retriever (híbrido)
-        retriever = EnsembleRetriever(
-            retrievers=[bm25_retriever, vector_retriever],
-            weights=[0.7, 0.3]
-        )
-        logger.info("🔍 Retrievers configurados (BM25: 70%, Vector: 30%)")
-        
-        # 4. LLM
-        llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
-        
-        # 5. Prompt mejorado con instrucciones de citas
-        base_instruction = TEXTS[language_code]["system_prompt"]
-        prompt_template = base_instruction + """
-
-INSTRUCCIONES CRÍTICAS:
-1. SIEMPRE cita el número de artículo específico cuando proporciones información
-2. Formato de citas: "Según el Artículo N°XX..."
-3. Si la información viene de múltiples artículos, cítalos todos
-4. Sé específico sobre qué sección del artículo aplica
-
-EJEMPLO:
-Pregunta: "¿Cuál es la nota mínima de aprobación?"
-Respuesta: "Según el Artículo N°30 del Reglamento Académico, la nota mínima de aprobación es 4.0 en una escala de 1.0 a 7.0."
-
-CONTEXTO DEL REGLAMENTO ACADÉMICO:
-{context}
-
-PREGUNTA DE {user_name}:
-{input}
-
-TU RESPUESTA (con citas a artículos):
-"""
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        
-        # 6. Chains
-        document_chain = create_stuff_documents_chain(llm, prompt)
-        retrieval_chain = create_retrieval_chain(retriever, document_chain)
-        
-        logger.info("✅ Motor RAG inicializado exitosamente")
-        return retrieval_chain
+    # 1. DEFINICIÓN DE ARCHIVOS A CARGAR
+    nombres_archivos = ["reglamento.pdf", "calendario_academico_2026.pdf"]
     
-    except Exception as e:
-        logger.error(f"❌ Error inicializando RAG: {e}")
-        st.error(f"Error inicializando el sistema: {str(e)}")
-        return None
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    all_docs = []
+    
+    # 2. CARGA DE DOCUMENTOS
+    for archivo in nombres_archivos:
+        ruta_completa = os.path.join(base_path, archivo)
+        try:
+            loader = PyPDFLoader(ruta_completa)
+            docs_archivo = loader.load()
+            all_docs.extend(docs_archivo)
+            print(f"✅ Cargado: {archivo}")
+        except Exception as e:
+            print(f"⚠️ Error cargando {archivo}: {e}")
+            try:
+                loader = PyPDFLoader(archivo)
+                docs_archivo = loader.load()
+                all_docs.extend(docs_archivo)
+            except:
+                continue
 
-# =============================================
-# SIDEBAR
-# =============================================
+    if not all_docs:
+        st.error("Error Crítico: No se encontraron documentos PDF.")
+        st.stop()
+
+    # 3. PROCESAMIENTO
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    docs_procesados = text_splitter.split_documents(all_docs)
+
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = Chroma.from_documents(docs_procesados, embeddings)
+    
+    # K=12 para leer tablas complejas
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 12})
+    bm25_retriever = BM25Retriever.from_documents(docs_procesados)
+    bm25_retriever.k = 12
+    
+    retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
+    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
+    
+    base_instruction = TEXTS[language_code]["system_prompt"]
+    
+    # 4. PROMPT MAESTRO (CON INYECCIÓN SEGURA)
+    # Aquí inyectamos el calendario usando f-string dentro de la inicialización
+    prompt_template = base_instruction + f"""
+    ROL: Asistente Académico experto.
+    
+    INFORMACIÓN OFICIAL OBLIGATORIA (CALENDARIO):
+    {DATOS_CALENDARIO}
+
+    INSTRUCCIONES DE RESPUESTA:
+    1. Si preguntan por fechas, usa EXCLUSIVAMENTE los datos del calendario de arriba.
+    2. Si preguntan por reglas (notas, asistencia), usa el contexto del Reglamento (abajo).
+    3. Si el texto del PDF parece confuso, ignóralo y usa los datos del calendario inyectados aquí.
+    
+    4. REGLA DE LENGUAJE (IMPORTANTE):
+       - Cuando hables de "Vacaciones de Invierno" o "Recesos", NUNCA uses la palabra "suspenderán" o "suspensión".
+       - Di simplemente: "Las vacaciones SON del [fecha] al [fecha]" o "El receso ESTÁ PROGRAMADO del [fecha] al [fecha]".
+    
+    FIRMA:
+    - Despídete como "Tu Asistente Virtual Duoc UC".
+
+    CONTEXTO ADICIONAL (PDFs):
+    {{context}}
+    
+    PREGUNTA DE {{user_name}}: {{input}}
+    RESPUESTA:
+    """
+    
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    retrieval_chain = create_retrieval_chain(retriever, document_chain)
+    return retrieval_chain
+
+# --- FETCH USERS ---
+def fetch_all_users():
+    try:
+        response = supabase.table('profiles').select("email, full_name, password_hash").execute()
+        if not response.data: return {}
+        users_dict = {u['email']: u for u in response.data}
+        return users_dict
+    except: return {}
+
+# --- SIDEBAR ---
 with st.sidebar:
-    # Logo
     st.markdown(f"""
         <div class="sidebar-logo-container">
             <img src="{LOGO_BANNER_URL}" style="width: 100%; max-width: 180px;">
         </div>
     """, unsafe_allow_html=True)
     
-    # Selector de idioma
-    st.markdown("### 🌐 Language / Idioma")
-    lang_option = st.selectbox(
-        "",
-        ["Español CL", "English US"],
-        key="language_selector"
-    )
-    
-    lang_code = "es" if "Español" in lang_option else "en"
+    lang_option = st.selectbox("🌐 Language / Idioma", ["Español 🇨🇱", "English 🇺🇸"], format_func=lambda x: TEXTS["es" if "Español" in x else "en"]["label"])
+    if "Español" in lang_option: lang_code = "es"
+    else: lang_code = "en"
     t = TEXTS[lang_code]
-    
-    # Botón de limpiar caché (solo admin)
-    if st.session_state.get('authentication_status') and st.session_state.get('is_admin'):
-        st.markdown("---")
-        if st.button("🔄 Actualizar Datos"):
-            st.cache_data.clear()
-            mostrar_confirmacion("Cache limpiado", "success")
-            time.sleep(0.5)
-            st.rerun()
-    
-    # Info de versión
-    st.markdown("---")
-    st.caption("📌 Versión 2.0 | Diciembre 2024")
-    st.caption("🔒 Sistema seguro con validaciones")
 
-# =============================================
-# INICIALIZAR ESTADO DE SESIÓN
-# =============================================
+# --- CABECERA ---
+col_title1, col_title2 = st.columns([0.1, 0.9])
+with col_title1: st.image(LOGO_ICON_URL, width=70)
+with col_title2: st.title(t["title"])
+
+# --- ESTADO DE AUTENTICACIÓN ---
 if "authentication_status" not in st.session_state:
-    st.session_state["authentication_status"] = False
-if "username" not in st.session_state:
-    st.session_state["username"] = None
-if "user_id" not in st.session_state:
-    st.session_state["user_id"] = None
-if "is_admin" not in st.session_state:
-    st.session_state["is_admin"] = False
-if "admin_authenticated" not in st.session_state:
-    st.session_state["admin_authenticated"] = False
+    st.session_state["authentication_status"] = None
 
-# =============================================
-# FUNCIONES DE AUTENTICACIÓN
-# =============================================
-
-@st.cache_data(ttl=60)
-def fetch_all_users():
-    """Obtiene todos los usuarios de Supabase"""
-    try:
-        response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
-        users_dict = {}
-        for user in response.data:
-            users_dict[user['email']] = {
-                'id': user['id'],
-                'full_name': user['full_name'],
-                'password_hash': user['password_hash']
-            }
-        return users_dict
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo usuarios: {e}")
-        return {}
-
-# =============================================
-# PANTALLA DE LOGIN/REGISTRO
-# =============================================
-if not st.session_state["authentication_status"]:
-    # Mensaje de bienvenida
-    st.markdown(f"""
-    <div style='text-align: center; padding: 2rem;'>
-        <h1>{t['welcome']}</h1>
-        <p style='color: #8B95A8; font-size: 1.1rem;'>Sistema de consultas académicas con IA</p>
-    </div>
-    """, unsafe_allow_html=True)
+# ==========================================
+# APP PRINCIPAL
+# ==========================================
+if st.session_state["authentication_status"] is True:
+    user_name = st.session_state["name"]
+    user_email = st.session_state["username"]
     
-    col1, col2 = st.columns(2)
-    
-    # LOGIN
-    with col1:
-        st.subheader(f"🔐 {t['login_title']}")
+    if 'user_id' not in st.session_state:
+        user_id_response = supabase.table('profiles').select('id').eq('email', user_email).execute()
+        if user_id_response.data: st.session_state.user_id = user_id_response.data[0]['id']
+        else: st.stop()
+    user_id = st.session_state.user_id
+
+    c1, c2 = st.columns([0.8, 0.2])
+    c1.caption(f"{t['login_success']} {user_name} ({user_email})")
+    if c2.button(t["logout_btn"], use_container_width=True):
+        st.session_state["authentication_status"] = None
+        st.session_state.clear()
+        st.rerun()
+
+    tab1, tab2, tab3 = st.tabs([t["tab1"], t["tab2"], t["tab3"]])
+
+    # --- TAB 1: CHATBOT ---
+    with tab1:
+        if st.button(t["chat_clear_btn"], use_container_width=True, key="clear_chat"):
+            with st.spinner(t["chat_cleaning"]):
+                try:
+                    supabase.table('chat_history').update({'is_visible': False}).eq('user_id', user_id).execute()
+                    st.session_state.messages = []
+                    welcome_msg = t["chat_welcome_clean"].format(name=user_name)
+                    res = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': welcome_msg}).execute()
+                    if res.data:
+                        st.session_state.messages.append({"id": res.data[0]['id'], "role": "assistant", "content": welcome_msg})
+                    keys_to_remove = [k for k in st.session_state.keys() if k.startswith("show_reason_")]
+                    for k in keys_to_remove: del st.session_state[k]
+                    st.success(t["chat_cleaned"])
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
         
-        with st.form("login_form"):
+        st.divider()
+        retrieval_chain = inicializar_cadena(lang_code)
+
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+            history = supabase.table('chat_history').select('id, role, message').eq('user_id', user_id).eq('is_visible', True).order('created_at').execute()
+            for row in history.data:
+                st.session_state.messages.append({"id": row['id'], "role": row['role'], "content": row['message']})
+            if not st.session_state.messages:
+                welcome_msg = t["chat_welcome"].format(name=user_name)
+                res = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': welcome_msg}).execute()
+                if res.data:
+                    st.session_state.messages.append({"id": res.data[0]['id'], "role": "assistant", "content": welcome_msg})
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg["role"] == "assistant" and msg["id"]:
+                    col_fb1, col_fb2, _ = st.columns([1,1,8])
+                    if col_fb1.button("👍", key=f"up_{msg['id']}"):
+                        supabase.table('feedback').insert({"message_id": msg['id'], "user_id": user_id, "rating": "good"}).execute()
+                        st.toast(t["feedback_thanks"])
+                    reason_key = f"show_reason_{msg['id']}"
+                    if col_fb2.button("👎", key=f"down_{msg['id']}"): st.session_state[reason_key] = True
+                    if st.session_state.get(reason_key, False):
+                        with st.form(key=f"form_{msg['id']}", enter_to_submit=False):
+                            st.write(t["feedback_modal_title"])
+                            comment_text = st.text_area("...", placeholder=t["feedback_modal_placeholder"], label_visibility="collapsed")
+                            c_sub1, c_sub2 = st.columns(2)
+                            if c_sub1.form_submit_button(t["btn_send"]):
+                                supabase.table('feedback').insert({"message_id": msg['id'], "user_id": user_id, "rating": "bad", "comment": comment_text}).execute()
+                                st.toast(t["feedback_report_sent"])
+                                st.session_state[reason_key] = False
+                                st.rerun()
+                            if c_sub2.form_submit_button(t["btn_cancel"]):
+                                st.session_state[reason_key] = False
+                                st.rerun()
+
+        # --- CHIPS DE SUGERENCIAS ---
+        if not st.session_state.messages or (len(st.session_state.messages) == 1 and st.session_state.messages[0]['role'] == 'assistant'):
+            st.markdown(t["sug_header"])
+            col_sug1, col_sug2, col_sug3 = st.columns(3)
+            sugerencia = None
+            if col_sug1.button(t["sug_btn1"]): sugerencia = t["sug_query1"]
+            if col_sug2.button(t["sug_btn2"]): sugerencia = t["sug_query2"]
+            if col_sug3.button(t["sug_btn3"]): sugerencia = t["sug_query3"]
+            
+            if sugerencia:
+                st.session_state.messages.append({"role": "user", "content": sugerencia})
+                supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia}).execute()
+                with st.spinner(t["chat_thinking"]):
+                    try:
+                        response = retrieval_chain.invoke({"input": sugerencia, "user_name": user_name})
+                        resp = response["answer"]
+                        res_bot = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+                        st.session_state.messages.append({"id": res_bot.data[0]['id'], "role": "assistant", "content": resp})
+                    except Exception as e:
+                        st.error(f"Error generando respuesta: {e}")
+                st.rerun()
+
+        if prompt := st.chat_input(t["chat_placeholder"]):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"): st.markdown(prompt)
+            supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
+            with st.chat_message("assistant"):
+                with st.spinner(t["chat_thinking"]):
+                    response = retrieval_chain.invoke({"input": prompt, "user_name": user_name})
+                    resp = response["answer"]
+                st.write_stream(stream_data(resp))
+            res_bot = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+            st.session_state.messages.append({"id": res_bot.data[0]['id'], "role": "assistant", "content": resp})
+
+    # --- TAB 2: INSCRIPCIÓN ---
+    with tab2:
+        st.header(t["enroll_title"])
+        
+        @st.cache_data(ttl=60)
+        def get_user_schedule(uid):
+            regs = supabase.table('registrations').select('section_id').eq('user_id', uid).execute().data
+            if not regs: return [], []
+            s_ids = [r['section_id'] for r in regs]
+            sch = supabase.table('sections').select('subject_id, day_of_week, start_time, end_time').in_('id', s_ids).execute().data
+            return [{"day": s['day_of_week'], "start": dt_time.fromisoformat(s['start_time']), "end": dt_time.fromisoformat(s['end_time'])} for s in sch], [s['subject_id'] for s in sch]
+
+        def check_conflict(schedule, new_sec):
+            n_start, n_end = dt_time.fromisoformat(new_sec['start_time']), dt_time.fromisoformat(new_sec['end_time'])
+            for s in schedule:
+                if s['day'] == new_sec['day_of_week'] and max(s['start'], n_start) < min(s['end'], n_end): return True
+            return False
+
+        @st.cache_data(ttl=300)
+        def get_all_subjects():
+            return supabase.table('subjects').select('id, name, career, semester').order('name').execute().data
+
+        subjects_data = get_all_subjects()
+
+        if not subjects_data: 
+            st.warning("No data.")
+        else:
+            if "selected_career" not in st.session_state:
+                st.session_state.selected_career = t["filter_all"]
+            if "selected_semester" not in st.session_state:
+                st.session_state.selected_semester = t["filter_all_m"]
+
+            temp_data_car = subjects_data
+            if st.session_state.selected_semester != t["filter_all_m"]:
+                try:
+                    sem_num_filter = int(st.session_state.selected_semester.split(" ")[1])
+                    temp_data_car = [s for s in subjects_data if s['semester'] == sem_num_filter]
+                except: pass
+            
+            avail_careers = sorted(list(set([s['career'] for s in temp_data_car if s['career']])))
+            career_opts = [t["filter_all"]] + avail_careers
+
+            temp_data_sem = subjects_data
+            if st.session_state.selected_career != t["filter_all"]:
+                temp_data_sem = [s for s in subjects_data if s['career'] == st.session_state.selected_career]
+            
+            avail_sems = sorted(list(set([s['semester'] for s in temp_data_sem if s['semester']])))
+            semester_opts = [t["filter_all_m"]] + [f"Semestre {s}" for s in avail_sems]
+
+            if st.session_state.selected_career not in career_opts:
+                st.session_state.selected_career = t["filter_all"]
+            if st.session_state.selected_semester not in semester_opts:
+                st.session_state.selected_semester = t["filter_all_m"]
+
+            c_f1, c_f2, c_res = st.columns([2, 2, 1])
+            with c_f1:
+                st.selectbox(t["filter_career"], career_opts, key="selected_career")
+            with c_f2:
+                st.selectbox(t["filter_sem"], semester_opts, key="selected_semester")
+            
+            def clear_filters_callback():
+                st.session_state.selected_career = t["filter_all"]
+                st.session_state.selected_semester = t["filter_all_m"]
+
+            with c_res:
+                st.write("")
+                st.write("")
+                st.button(t["reset_btn"], on_click=clear_filters_callback)
+
+            filtered = subjects_data
+            if st.session_state.selected_career != t["filter_all"]:
+                filtered = [s for s in filtered if s['career'] == st.session_state.selected_career]
+            if st.session_state.selected_semester != t["filter_all_m"]:
+                try:
+                    sem_num = int(st.session_state.selected_semester.split(" ")[1])
+                    filtered = [s for s in filtered if s['semester'] == sem_num]
+                except: pass
+
+            s_dict = {s['name']: s['id'] for s in filtered}
+            st.markdown(f"##### {t['search_label']}")
+            sel_name = st.selectbox("Search", s_dict.keys(), index=None, placeholder=t["search_placeholder"], label_visibility="collapsed")
+            
+            st.divider()
+
+            if sel_name:
+                sid = s_dict[sel_name]
+                secs = supabase.table('sections').select('*').eq('subject_id', sid).execute().data
+                if not secs: st.warning("No sections.")
+                else:
+                    st.subheader(f"{t['sec_title']} {sel_name}")
+                    sch, sids = get_user_schedule(user_id)
+                    if sid in sids: st.info(t["msg_already"])
+                    else:
+                        for sec in secs:
+                            with st.container(border=True):
+                                rc = supabase.table('registrations').select('id', count='exact').eq('section_id', sec['id']).execute().count
+                                cupos = sec['capacity'] - (rc if rc else 0)
+                                c1,c2,c3,c4 = st.columns([2,3,2,2])
+                                c1.write(f"**{sec['section_code']}**")
+                                c2.write(f"{sec['day_of_week']} {sec['start_time'][:5]}-{sec['end_time'][:5]}")
+                                c3.write(sec['professor_name'])
+                                if cupos > 0:
+                                    if c4.button(f"{t['btn_enroll']} ({cupos})", key=sec['id']):
+                                        if check_conflict(sch, sec): st.error(t["msg_conflict"])
+                                        else:
+                                            supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
+                                            st.success(t["msg_enrolled"])
+                                            st.cache_data.clear()
+                                            st.rerun()
+                                else: c4.button(t["btn_full"], disabled=True, key=sec['id'])
+        
+        st.subheader(t["my_schedule"])
+        sch, _ = get_user_schedule(user_id)
+        if not sch: st.info(t["no_schedule"])
+        else:
+            regs = supabase.table('registrations').select('id, sections(section_code, day_of_week, start_time, end_time, professor_name, subjects(name))').eq('user_id', user_id).execute().data
+            for r in regs:
+                s = r['sections']
+                with st.expander(f"📘 {s['subjects']['name']} ({s['section_code']})"):
+                    c1,c2 = st.columns([4,1])
+                    c1.write(f"{s['day_of_week']} {s['start_time'][:5]}-{s['end_time'][:5]} | Prof: {s['professor_name']}")
+                    if c2.button(t["btn_drop"], key=f"del_{r['id']}", type="primary"):
+                        supabase.table('registrations').delete().eq('id', r['id']).execute()
+                        st.success(t["msg_dropped"])
+                        st.cache_data.clear()
+                        st.rerun()
+
+    # --- TAB 3: ADMIN ---
+    with tab3:
+        st.header(t["admin_title"])
+        admin_pass = st.text_input(t["admin_pass_label"], type="password")
+        
+        if admin_pass == ADMIN_PASSWORD:
+            st.success(t["admin_success"])
+            if st.button(t["admin_update_btn"], key="refresh_top"): st.rerun()
+            
+            try:
+                response = supabase.table('chat_history').select('created_at, role, message, is_visible, user_id, feedback(rating, comment)').not_.is_('feedback', 'null').order('created_at', desc=True).execute()
+                users_count = supabase.table('profiles').select('id', count='exact', head=True).execute().count
+
+                if not response.data: 
+                    st.warning("Aún no hay interacciones con feedback.")
+                else:
+                    total_feedback = len(response.data)
+                    total_good = sum(1 for x in response.data if x['feedback'] and x['feedback'][0]['rating'] == 'good')
+                    total_bad = sum(1 for x in response.data if x['feedback'] and x['feedback'][0]['rating'] == 'bad')
+                    satisfaction_rate = (total_good / total_feedback * 100) if total_feedback > 0 else 0
+
+                    st.markdown("### 📊 Métricas Generales")
+                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+                    kpi1.metric("👥 Usuarios Totales", users_count)
+                    kpi2.metric("💬 Feedbacks Recibidos", total_feedback)
+                    kpi3.metric("👍 Tasa Satisfacción", f"{satisfaction_rate:.1f}%")
+                    kpi4.metric("🚨 Reportes Negativos", total_bad, delta_color="inverse")
+                    
+                    st.divider()
+
+                    c_filter, _ = st.columns([0.4, 0.6])
+                    show_only_bad = c_filter.toggle("🔥 Mostrar solo Feedback Negativo (Errores)", value=False)
+
+                    data_tbl = []
+                    st.write("Cargando detalles...")
+                    pbar = st.progress(0)
+                    
+                    for i, item in enumerate(response.data):
+                        fb = item['feedback'][0] if item['feedback'] else {'rating': 'N/A', 'comment': ''}
+                        
+                        if show_only_bad and fb['rating'] != 'bad':
+                            pbar.progress((i+1)/len(response.data))
+                            continue
+
+                        icon = "✅" if fb['rating'] == "good" else "❌"
+                        status = "Activo" if item['is_visible'] else "Archivado"
+                        
+                        try:
+                            q = supabase.table('chat_history').select('message').eq('user_id', item['user_id']).eq('role', 'user').lt('created_at', item['created_at']).order('created_at', desc=True).limit(1).execute()
+                            q_text = q.data[0]['message'] if q.data else "N/A"
+                        except: q_text = "Error al buscar contexto"
+                        
+                        data_tbl.append({
+                            t["col_date"]: item['created_at'][:16].replace("T", " "),
+                            t["col_status"]: status,
+                            t["col_q"]: q_text,
+                            t["col_a"]: item['message'],
+                            t["col_val"]: icon,
+                            t["col_com"]: fb.get('comment', '')
+                        })
+                        pbar.progress((i+1)/len(response.data))
+                    pbar.empty()
+                    
+                    st.markdown(f"### 📝 Registro Detallado ({len(data_tbl)} filas)")
+                    
+                    if data_tbl:
+                        df_download = pd.DataFrame(data_tbl)
+                        csv = df_download.to_csv(index=False).encode('utf-8-sig')
+                        
+                        c_tbl, c_dl = st.columns([0.8, 0.2])
+                        c_tbl.dataframe(data_tbl, use_container_width=True)
+                        c_dl.download_button(
+                            label="📥 Descargar CSV",
+                            data=csv,
+                            file_name="reporte_chatbot.csv",
+                            mime="text/csv",
+                        )
+                    else:
+                        st.info("No hay datos para mostrar con los filtros actuales.")
+
+            except Exception as e: st.error(f"Error cargando datos: {str(e)}")
+        elif admin_pass: st.error(t["auth_error"])
+
+# ==========================================
+# LOGIN MANUAL
+# ==========================================
+else:
+    col_L, col_Main, col_R = st.columns([1, 2, 1])
+    with col_Main:
+        st.subheader(t["login_title"])
+        with st.form("login_form", enter_to_submit=False):
             input_email = st.text_input(t["login_user"])
             input_pass = st.text_input(t["login_pass"], type="password")
-            submit = st.form_submit_button(t["login_btn"], type="primary")
-            
+            submit = st.form_submit_button(t["login_btn"], use_container_width=True)
             if submit:
-                with st.spinner("🔍 Verificando credenciales..."):
-                    all_users = fetch_all_users()
-                    
-                    if input_email in all_users:
-                        stored_hash = all_users[input_email]['password_hash']
-                        
-                        if bcrypt.checkpw(input_pass.encode('utf-8'), stored_hash.encode('utf-8')):
-                            st.session_state["authentication_status"] = True
-                            st.session_state["username"] = all_users[input_email]['full_name']
-                            st.session_state["user_id"] = all_users[input_email]['id']
-                            
-                            # Log
-                            logger.info(f"✅ Login exitoso: {input_email} | {st.session_state['username']}")
-                            
-                            mostrar_confirmacion(f"{t['login_success']} {st.session_state['username']}", "success")
-                            time.sleep(0.5)
-                            st.rerun()
-                        else:
-                            logger.warning(f"🔒 Login fallido: {input_email} - Contraseña incorrecta")
-                            mostrar_confirmacion(t["login_error"], "error")
-                    else:
-                        logger.warning(f"🔒 Login fallido: {input_email} - Usuario no existe")
-                        mostrar_confirmacion(t["login_error"], "error")
-    
-    # REGISTRO
-    with col2:
-        st.subheader(f"📝 {t['reg_title']}")
-        
-        with st.form("register_form"):
+                all_users = fetch_all_users()
+                if input_email in all_users:
+                    stored_hash = all_users[input_email]['password_hash']
+                    if bcrypt.checkpw(input_pass.encode('utf-8'), stored_hash.encode('utf-8')):
+                        st.session_state["authentication_status"] = True
+                        st.session_state["name"] = all_users[input_email]['full_name']
+                        st.session_state["username"] = input_email
+                        st.toast(t["login_welcome"])
+                        time.sleep(0.5)
+                        st.rerun()
+                    else: st.error(t["login_failed"])
+                else: st.error(t["login_failed"])
+
+    with st.sidebar:
+        st.subheader(t["reg_header"])
+        with st.form("reg", enter_to_submit=False):
             n = st.text_input(t["reg_name"])
             e = st.text_input(t["reg_email"])
             p = st.text_input(t["reg_pass"], type="password")
-            register_btn = st.form_submit_button(t["reg_btn"], type="primary")
-            
-            if register_btn:
-                # Validar email institucional
-                if not validar_email_duoc(e):
-                    mostrar_confirmacion("Debes usar tu correo institucional @duocuc.cl", "error")
-                else:
-                    # Validar contraseña fuerte
-                    es_fuerte, mensaje = validar_password_fuerte(p)
-                    if not es_fuerte:
-                        mostrar_confirmacion(f"Contraseña débil: {mensaje}", "error")
-                    else:
-                        with st.spinner("✍️ Creando cuenta..."):
-                            try:
-                                # Hash de contraseña con 12 rounds
-                                hashed_bytes = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt(rounds=12))
-                                hashed_str = hashed_bytes.decode('utf-8')
-                                
-                                # Insertar en BD
-                                response = supabase.table('profiles').insert({
-                                    'email': e,
-                                    'full_name': n,
-                                    'password_hash': hashed_str
-                                }).execute()
-                                
-                                # Log
-                                logger.info(f"📝 Nuevo usuario registrado: {e} | {n}")
-                                
-                                mostrar_confirmacion(t["reg_success"], "success")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as ex:
-                                logger.error(f"❌ Error en registro: {ex}")
-                                mostrar_confirmacion("Error al crear cuenta. El email podría estar en uso.", "error")
-
-# =============================================
-# APLICACIÓN PRINCIPAL (USUARIO AUTENTICADO)
-# =============================================
-else:
-    # Inicializar motor RAG
-    if "retrieval_chain" not in st.session_state:
-        st.session_state["retrieval_chain"] = inicializar_cadena(lang_code)
-    
-    # Header con saludo personalizado
-    st.markdown(f"""
-    <div style='text-align: center; padding: 1.5rem;'>
-        <h2>{obtener_saludo_hora()} {st.session_state['username']}</h2>
-        <p style='color: #8B95A8;'>¿En qué puedo ayudarte hoy?</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Botón de logout
-    col_logout1, col_logout2, col_logout3 = st.columns([5, 1, 1])
-    with col_logout3:
-        if st.button("🚪 Salir"):
-            logger.info(f"👋 Logout: {st.session_state['username']}")
-            st.session_state["authentication_status"] = False
-            st.session_state["username"] = None
-            st.session_state["user_id"] = None
-            st.session_state["is_admin"] = False
-            st.session_state["admin_authenticated"] = False
-            st.rerun()
-    
-    # =============================================
-    # TABS PRINCIPALES
-    # =============================================
-    tab1, tab2, tab3 = st.tabs([
-        t["tab_chat"],
-        t["tab_enrollment"],
-        t["tab_admin"]
-    ])
-    
-    # =============================================
-    # TAB 1: CHATBOT ACADÉMICO
-    # =============================================
-    with tab1:
-        st.markdown("### 💬 Asistente Académico con IA")
-        st.caption("Pregunta sobre notas, asistencia, evaluaciones, inscripción y más...")
-        
-        # Inicializar historial de chat
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        
-        # Mostrar historial
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-        # Input del usuario
-        if prompt := st.chat_input(t["chat_input"]):
-            # Verificar easter eggs
-            prompt_lower = prompt.lower().strip()
-            
-            if prompt_lower in EASTER_EGGS:
-                # Easter egg
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                respuesta = EASTER_EGGS[prompt_lower]
-                st.session_state.messages.append({"role": "assistant", "content": respuesta})
-                
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                with st.chat_message("assistant"):
-                    st.markdown(respuesta)
-                
-                logger.info(f"🎮 Easter egg: {st.session_state['username']} → {prompt_lower}")
-            else:
-                # Consulta normal al RAG
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                
-                with st.chat_message("assistant"):
-                    with st.spinner("🤔 Consultando el reglamento académico..."):
-                        try:
-                            # Query al RAG
-                            response = st.session_state["retrieval_chain"].invoke({
-                                "input": prompt,
-                                "user_name": st.session_state["username"]
-                            })
-                            
-                            respuesta = response["answer"]
-                            
-                            # Resaltar citas de artículos
-                            respuesta = resaltar_articulos(respuesta)
-                            
-                            st.markdown(respuesta)
-                            st.session_state.messages.append({"role": "assistant", "content": respuesta})
-                            
-                            # Log
-                            logger.info(f"💬 Query de {st.session_state['username']}: {prompt[:50]}...")
-                            
-                            # Guardar en BD
-                            try:
-                                supabase.table('chat_history').insert({
-                                    'user_id': st.session_state['user_id'],
-                                    'role': 'user',
-                                    'message': prompt
-                                }).execute()
-                                
-                                supabase.table('chat_history').insert({
-                                    'user_id': st.session_state['user_id'],
-                                    'role': 'assistant',
-                                    'message': respuesta
-                                }).execute()
-                            except:
-                                pass
-                        
-                        except Exception as e:
-                            logger.error(f"❌ Error en RAG: {e}")
-                            error_msg = "Lo siento, hubo un error procesando tu pregunta. Por favor intenta de nuevo."
-                            st.error(error_msg)
-                            st.session_state.messages.append({"role": "assistant", "content": error_msg})
-        
-        # Botones de feedback
-        if len(st.session_state.messages) > 0:
-            st.markdown("---")
-            col_fb1, col_fb2, col_fb3 = st.columns([4, 1, 1])
-            with col_fb2:
-                if st.button("👍 Útil"):
-                    mostrar_confirmacion("Gracias por tu feedback!", "success")
-            with col_fb3:
-                if st.button("👎 No útil"):
-                    mostrar_confirmacion("Gracias, trabajaremos en mejorar", "info")
-    
-    # =============================================
-    # TAB 2: INSCRIPCIÓN DE ASIGNATURAS
-    # =============================================
-    with tab2:
-        st.markdown("### 📚 Inscripción de Asignaturas")
-        st.markdown("#### Toma de Ramos 2025")
-        
-        # Filtros
-        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
-        
-        with col_f1:
-            st.markdown("📂 **Filtrar por Carrera:**")
-            carrera_filter = st.selectbox("", ["Todas las Carreras", "Ingeniería en Informática", "Ingeniería Civil"], key="carrera_filter")
-        
-        with col_f2:
-            st.markdown("🎓 **Filtrar por Semestre:**")
-            semestre_filter = st.selectbox("", ["Todos los Semestres", "1", "2", "3", "4"], key="semestre_filter")
-        
-        with col_f3:
-            st.markdown("")
-            st.markdown("")
-            if st.button("🔄 Limpiar Filtros"):
-                st.rerun()
-        
-        # Buscar asignatura
-        st.markdown("🔍 **Buscar Asignatura:**")
-        search_query = st.text_input("", placeholder="Escribe el nombre del ramo...", key="search_subject")
-        
-        st.markdown("---")
-        
-        # Cargar asignaturas disponibles
-        with st.spinner("📚 Cargando catálogo de asignaturas..."):
-            available_subjects = get_all_subjects()
-        
-        if search_query:
-            # Filtrar por búsqueda
-            filtered_subjects = [s for s in available_subjects if search_query.lower() in s.get('name', '').lower()]
-        else:
-            filtered_subjects = available_subjects
-        
-        if filtered_subjects:
-            st.markdown(f"### Secciones Disponibles para: {filtered_subjects[0].get('name', 'N/A')}")
-            
-            # Ejemplo de sección disponible
-            with st.expander("📘 SEC-78-01D | Lunes 16:20-18:30 | C. Díaz", expanded=True):
-                st.write("**Profesor:** C. Díaz")
-                st.write("**Horario:** Lunes 16:20-18:30")
-                st.write("**Cupos disponibles:** 30/45")
-                st.write("**Créditos:** 4")
-                
-                if st.button("Inscribir (30)", key="inscribir_sec_78", type="primary"):
-                    with st.spinner("✍️ Procesando inscripción..."):
-                        time.sleep(0.5)
-                        mostrar_confirmacion(
-                            f"Te inscribiste en {filtered_subjects[0].get('name', 'la asignatura')}",
-                            "success"
-                        )
-                        logger.info(f"📚 Inscripción: {st.session_state['username']} → {filtered_subjects[0].get('name', 'asignatura')}")
-        
-        st.markdown("---")
-        
-        # Tu carga académica
-        st.markdown("### 📋 Tu Carga Académica")
-        
-        # Cargar horario del usuario
-        user_schedule = get_user_schedule(st.session_state['user_id'])
-        
-        if user_schedule:
-            # Mostrar asignaturas inscritas
-            for enrollment in user_schedule:
-                section = enrollment.get('sections', {})
-                subject = section.get('subjects', {})
-                
-                with st.expander(f"📘 {subject.get('name', 'Asignatura')} ({section.get('code', 'N/A')})"):
-                    st.write(f"**Horario:** {section.get('day', 'N/A')} {section.get('start_time', 'N/A')}-{section.get('end_time', 'N/A')}")
-                    st.write(f"**Profesor:** {section.get('professor', 'N/A')}")
-                    st.write(f"**Créditos:** {subject.get('credits', 'N/A')}")
-                    
-                    if st.button("Anular Ramos", key=f"anular_{section.get('id')}", type="primary"):
-                        with st.spinner("🗑️ Procesando anulación..."):
-                            try:
-                                supabase.table('registrations')\
-                                    .delete()\
-                                    .eq('user_id', st.session_state['user_id'])\
-                                    .eq('section_id', section.get('id'))\
-                                    .execute()
-                                
-                                mostrar_confirmacion(
-                                    f"Anulaste {subject.get('name', 'la asignatura')}",
-                                    "info"
-                                )
-                                logger.info(f"🗑️ Anulación: {st.session_state['username']} → {subject.get('name', 'asignatura')}")
-                                time.sleep(0.5)
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                logger.error(f"❌ Error en anulación: {e}")
-                                mostrar_confirmacion("Error al anular", "error")
-            
-            # Botones de exportar
-            st.markdown("---")
-            st.subheader("📥 Exportar Horario")
-            
-            col_exp1, col_exp2 = st.columns(2)
-            
-            with col_exp1:
-                # Preparar datos para export
-                export_sections = []
-                for enrollment in user_schedule:
-                    section = enrollment.get('sections', {})
-                    subject = section.get('subjects', {})
-                    export_sections.append({
-                        'subject_name': subject.get('name', 'N/A'),
-                        'code': section.get('code', 'N/A'),
-                        'day': section.get('day', 'N/A'),
-                        'start_time': section.get('start_time', 'N/A'),
-                        'end_time': section.get('end_time', 'N/A'),
-                        'professor': section.get('professor', 'N/A')
-                    })
-                
-                # Botón PDF
-                pdf_buffer = generar_pdf_horario(export_sections, st.session_state['username'])
-                st.download_button(
-                    label="📄 Descargar PDF",
-                    data=pdf_buffer,
-                    file_name=f"horario_{st.session_state['username']}.pdf",
-                    mime="application/pdf",
-                    type="primary"
-                )
-            
-            with col_exp2:
-                # Botón ICS
-                ics_data = generar_ics_horario(export_sections, st.session_state['username'])
-                st.download_button(
-                    label="📅 Agregar a Google Calendar",
-                    data=ics_data,
-                    file_name=f"horario_{st.session_state['username']}.ics",
-                    mime="text/calendar",
-                    type="secondary"
-                )
-        else:
-            st.info("📭 No tienes asignaturas inscritas aún")
-    
-    # =============================================
-    # TAB 3: PANEL ADMIN
-    # =============================================
-    with tab3:
-        st.markdown("### 🔐 Panel de Administración")
-        
-        # Verificar autenticación admin
-        if not st.session_state.get("admin_authenticated"):
-            st.warning("⚠️ Acceso restringido. Ingresa la contraseña de administrador.")
-            
-            # Verificar rate limit
-            puede_intentar, mensaje_error = check_admin_rate_limit()
-            
-            if not puede_intentar:
-                st.error(mensaje_error)
-            else:
-                admin_pass = st.text_input(
-                    t["admin_pass_label"],
-                    type="password",
-                    key="admin_pass_input"
-                )
-                
-                if st.button("Acceder", key="admin_access_btn", type="primary"):
-                    if admin_pass == ADMIN_PASSWORD:
-                        st.session_state["admin_authenticated"] = True
-                        st.session_state["is_admin"] = True
-                        registrar_intento_admin(exitoso=True)
-                        mostrar_confirmacion("Acceso autorizado", "success")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        registrar_intento_admin(exitoso=False)
-                        intentos_restantes = 3 - st.session_state.admin_attempts
-                        if intentos_restantes > 0:
-                            mostrar_confirmacion(
-                                f"Contraseña incorrecta. Te quedan {intentos_restantes} intentos",
-                                "error"
-                            )
-                        else:
-                            mostrar_confirmacion("Bloqueado por 5 minutos", "error")
-        else:
-            # PANEL ADMIN AUTENTICADO
-            st.success("✅ Acceso administrativo autorizado")
-            
-            st.markdown("---")
-            
-            # DASHBOARD DE ESTADÍSTICAS
-            st.markdown("## 📊 Dashboard de Métricas")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            # Cargar estadísticas
-            with st.spinner("📊 Cargando estadísticas..."):
+            if st.form_submit_button(t["reg_btn"]):
+                hashed_bytes = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt())
+                hashed_str = hashed_bytes.decode('utf-8')
                 try:
-                    # Total usuarios
-                    total_users = supabase.table('profiles').select('id', count='exact').execute()
-                    
-                    # Total consultas
-                    total_chats = supabase.table('chat_history').select('id', count='exact').execute()
-                    
-                    # Total inscripciones
-                    total_inscripciones = supabase.table('registrations').select('id', count='exact').execute()
-                    
-                    # Feedback
-                    feedbacks = supabase.table('feedback').select('rating').execute()
-                    if feedbacks.data:
-                        ratings = [f['rating'] for f in feedbacks.data if f['rating'] in ['👍', '👎']]
-                        positivos = ratings.count('👍')
-                        total_ratings = len(ratings)
-                        satisfaccion = (positivos / total_ratings * 100) if total_ratings > 0 else 0
-                    else:
-                        satisfaccion = 0
-                    
-                    with col1:
-                        st.metric(
-                            label="👥 Usuarios Totales",
-                            value=total_users.count if hasattr(total_users, 'count') else 0,
-                            delta="+12 esta semana"
-                        )
-                    
-                    with col2:
-                        st.metric(
-                            label="💬 Consultas Totales",
-                            value=total_chats.count if hasattr(total_chats, 'count') else 0,
-                            delta="+234 hoy"
-                        )
-                    
-                    with col3:
-                        st.metric(
-                            label="📚 Inscripciones Activas",
-                            value=total_inscripciones.count if hasattr(total_inscripciones, 'count') else 0
-                        )
-                    
-                    with col4:
-                        st.metric(
-                            label="⭐ Satisfacción",
-                            value=f"{satisfaccion:.0f}%",
-                            delta="+5% vs mes pasado"
-                        )
-                
-                except Exception as e:
-                    logger.error(f"❌ Error cargando estadísticas: {e}")
-                    st.error("Error cargando métricas")
-            
-            st.markdown("---")
-            
-            # Tabla de feedback
-            st.markdown("### 📝 Feedback Reciente")
-            
-            try:
-                feedback_data = supabase.table('chat_history')\
-                    .select('created_at, message, user_id')\
-                    .order('created_at', desc=True)\
-                    .limit(10)\
-                    .execute()
-                
-                if feedback_data.data:
-                    df = pd.DataFrame(feedback_data.data)
-                    st.dataframe(df, use_container_width=True)
-                else:
-                    st.info("No hay feedback disponible")
-            except Exception as e:
-                logger.error(f"❌ Error cargando feedback: {e}")
-                st.error("Error cargando feedback")
-            
-            st.markdown("---")
-            
-            # Top usuarios
-            st.markdown("### 🏆 Top 5 Usuarios Más Activos")
-            
-            # Ejemplo de datos (implementar query real según tu BD)
-            top_users_df = pd.DataFrame({
-                'Usuario': ['Juan Pérez', 'María González', 'Pedro Soto', 'Ana Silva', 'Luis Rojas'],
-                'Email': ['juan@duocuc.cl', 'maria@duocuc.cl', 'pedro@duocuc.cl', 'ana@duocuc.cl', 'luis@duocuc.cl'],
-                'Consultas': [156, 142, 128, 115, 98]
-            })
-            
-            st.dataframe(top_users_df, use_container_width=True)
-
-# =============================================
-# FOOTER
-# =============================================
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #8B95A8; padding: 1rem;'>
-    <p>💙 Desarrollado por Rena | Capstone Project 2024</p>
-    <p style='font-size: 0.8rem;'>Duoc UC - Ingeniería en Informática</p>
-</div>
-""", unsafe_allow_html=True)
-
-logger.info("✅ App renderizada exitosamente")
+                    supabase.table('profiles').insert({'full_name': n, 'email': e, 'password_hash': hashed_str}).execute()
+                    st.success(t["reg_success"])
+                except: st.error("Error")
