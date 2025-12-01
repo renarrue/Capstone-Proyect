@@ -1,4 +1,4 @@
-# Versión 27.0 (FINAL: Fix Lectura Tablas PDF + k=12 + Prompt Desencriptador)
+# Versión 28.0 (FINAL DEFINITIVA: Inyección de Datos de Calendario + Reglamento)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -30,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CARGAR CSS DESDE ARCHIVO EXTERNO (Ruta Absoluta Segura) ---
+# --- CARGAR CSS ---
 def load_css(file_name):
     directorio_actual = os.path.dirname(os.path.abspath(__file__))
     ruta_css = os.path.join(directorio_actual, file_name)
@@ -41,6 +41,31 @@ def load_css(file_name):
         st.error(f"⚠️ Error: No se encontró el estilo en: {ruta_css}")
 
 load_css("styles.css")
+
+# --- DATOS DUROS DEL CALENDARIO (LA "HOJA DE TRUCOS") ---
+# Esto garantiza precisión 100% en fechas críticas
+DATOS_CALENDARIO = """
+RESUMEN OFICIAL DE FECHAS CLAVE 2026 (Usar esta información con prioridad):
+1. PRIMER SEMESTRE:
+   - Semana Cero (Inducción): Del 02 de Marzo al 07 de Marzo de 2026.
+   - Inicio de Clases: Lunes 09 de Marzo de 2026.
+   - Término de Clases: 21 de Julio de 2026.
+   - Período de Exámenes: Del 06 de Julio al 21 de Julio de 2026.
+   - Retiro de Asignaturas: Hasta el 11 de Abril de 2026.
+
+2. SEGUNDO SEMESTRE:
+   - Inicio de Clases: Lunes 10 de Agosto de 2026.
+   - Término de Clases: 22 de Diciembre de 2026.
+   - Período de Exámenes: Del 07 de Diciembre al 22 de Diciembre de 2026.
+   - Retiro de Asignaturas: Hasta el 12 de Septiembre de 2026.
+
+3. FERIADOS PRINCIPALES:
+   - Semana Santa: 03 y 04 de Abril.
+   - Día del Trabajador: 01 de Mayo.
+   - Glorias Navales: 21 de Mayo.
+   - Vacaciones de Invierno (Suspensión): Del 24 de Julio al 08 de Agosto.
+   - Fiestas Patrias: 18 y 19 de Septiembre.
+"""
 
 # --- DICCIONARIO DE TRADUCCIONES ---
 TEXTS = {
@@ -115,9 +140,11 @@ TEXTS = {
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
         "sug_btn3": "📋 Justificar Inasistencia",
         "sug_query3": "¿Cómo justifico una inasistencia?",
-        "system_prompt": """
+        "system_prompt": f"""
         INSTRUCCIÓN: Responde en Español formal pero cercano.
         ROL: Eres un coordinador académico de Duoc UC.
+        DATOS OBLIGATORIOS DEL CALENDARIO:
+        {DATOS_CALENDARIO}
         """
     },
     "en": {
@@ -221,87 +248,54 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- CHATBOT ENGINE (MULTI-DOCUMENTO) ---
+# --- CHATBOT ENGINE ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    # 1. DEFINICIÓN DE ARCHIVOS A CARGAR
-    # Asegúrate de que estos archivos estén en la misma carpeta que app.py
-    nombres_archivos = ["reglamento.pdf", "calendario_academico_2026.pdf"]
-    
+    # Carga de archivos (Reglamento)
+    nombres_archivos = ["reglamento.pdf"]
     base_path = os.path.dirname(os.path.abspath(__file__))
     all_docs = []
     
-    # 2. CARGA DE DOCUMENTOS
     for archivo in nombres_archivos:
         ruta_completa = os.path.join(base_path, archivo)
         try:
             loader = PyPDFLoader(ruta_completa)
-            docs_archivo = loader.load()
-            all_docs.extend(docs_archivo)
-            print(f"✅ Cargado: {archivo}")
-        except Exception as e:
-            print(f"⚠️ Error cargando {archivo}: {e}")
-            # Intentamos buscar en la ruta relativa como fallback
-            try:
-                loader = PyPDFLoader(archivo)
-                docs_archivo = loader.load()
-                all_docs.extend(docs_archivo)
-            except:
-                continue
+            all_docs.extend(loader.load())
+        except: continue
 
     if not all_docs:
-        st.error("Error Crítico: No se encontraron documentos PDF (Reglamento/Calendario).")
-        st.stop()
-
-    # 3. PROCESAMIENTO
+        # Fallback simple si falla la carga para no romper la app
+        st.error("No se pudo cargar el reglamento.")
+    
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    docs_procesados = text_splitter.split_documents(all_docs)
+    # Validamos que haya docs antes de split
+    if all_docs:
+        docs_procesados = text_splitter.split_documents(all_docs)
+    else:
+        docs_procesados = []
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector_store = Chroma.from_documents(docs_procesados, embeddings)
     
-    # --- CAMBIO CRÍTICO: AUMENTO DE K PARA LEER TABLAS ---
-    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 12}) # Antes 7
-    bm25_retriever = BM25Retriever.from_documents(docs_procesados)
-    bm25_retriever.k = 12 # Antes 7
-    # ----------------------------------------------------
-    
-    retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
-    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
-    
-    base_instruction = TEXTS[language_code]["system_prompt"]
-    
-    # 4. PROMPT ESPECIALIZADO EN TABLAS PDF
-    prompt_template = base_instruction + """
-    ROL: Asistente Académico experto en leer calendarios y reglamentos.
-
-    INSTRUCCIONES DE LECTURA (CRÍTICO):
-    1. El texto del Calendario proviene de una tabla PDF y puede verse desordenado.
-    2. Busca activamente fechas con formato "dd-mm-aaaa" (ej: 09-03-2026) cercanas a las palabras clave.
-    3. Si ves abreviaturas como "lun", "mar", "mie", "jue", "vie", "sab", ignóralas y toma la fecha numérica.
-    4. ATENCIÓN: 
-       - "Inicio de Clases 1er Semestre" suele ser en MARZO.
-       - "Inicio de Clases 2do Semestre" suele ser en AGOSTO.
-       - "Exámenes" suelen ser en JULIO (1er sem) y DICIEMBRE (2do sem).
-
-    REGLAS DE RESPUESTA:
-    1. Si encuentras la fecha, dila con seguridad (Ej: "**09 de Marzo de 2026**").
-    2. Si te preguntan "Fechas Importantes", extrae y lista: Inicio de Clases, Semana Cero, Exámenes y Feriados.
-    3. Si la pregunta es sobre reglas (notas, asistencia), usa el Reglamento.
-    
-    FIRMA:
-    - Despídete como "Tu Asistente Virtual Duoc UC".
-
-    CONTEXTO:
-    {context}
-    
-    PREGUNTA DE {user_name}: {input}
-    RESPUESTA:
-    """
-    prompt = ChatPromptTemplate.from_template(prompt_template)
-    document_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(retriever, document_chain)
-    return retrieval_chain
+    if docs_procesados:
+        vector_store = Chroma.from_documents(docs_procesados, embeddings)
+        vector_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
+        bm25_retriever = BM25Retriever.from_documents(docs_procesados)
+        bm25_retriever.k = 7
+        retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
+        
+        # Document chain normal
+        document_chain = create_stuff_documents_chain(
+            ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1),
+            ChatPromptTemplate.from_template(TEXTS[language_code]["system_prompt"] + """
+            CONTEXTO DEL REGLAMENTO: {context}
+            PREGUNTA: {input}
+            RESPUESTA:
+            """)
+        )
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+        return retrieval_chain
+    else:
+        return None
 
 # --- FETCH USERS ---
 def fetch_all_users():
@@ -440,6 +434,27 @@ if st.session_state["authentication_status"] is True:
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
             with st.chat_message("assistant"):
                 with st.spinner(t["chat_thinking"]):
+                    # Usamos el Prompt Maestro que tiene los datos inyectados
+                    prompt_maestro = f"""
+                    ROL: Asistente Académico experto.
+                    
+                    INSTRUCCIONES:
+                    1. Si preguntan por fechas, usa EXCLUSIVAMENTE estos datos oficiales:
+                    {DATOS_CALENDARIO}
+                    
+                    2. Si preguntan por reglas (notas, asistencia), usa el contexto del Reglamento (abajo).
+                    
+                    3. Sé amable y usa listas. Despídete como "Tu Asistente Virtual Duoc UC".
+
+                    CONTEXTO REGLAMENTO:
+                    {{context}}
+                    
+                    PREGUNTA: {{input}}
+                    """
+                    
+                    # Hack para reemplazar el prompt en tiempo de ejecución
+                    retrieval_chain.combine_docs_chain.llm_chain.prompt.template = prompt_maestro
+                    
                     response = retrieval_chain.invoke({"input": prompt, "user_name": user_name})
                     resp = response["answer"]
                 st.write_stream(stream_data(resp))
