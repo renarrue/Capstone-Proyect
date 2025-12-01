@@ -1,4 +1,4 @@
-# Versión 25.0 (FINAL: Traducción Completa Chips + Excel + Filtros + Base Estable)
+# Versión 25.1 (CORREGIDA: Rutas absolutas para Deploy)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -30,10 +30,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CARGAR CSS DESDE ARCHIVO EXTERNO ---
+# --- CARGAR CSS DESDE ARCHIVO EXTERNO (CORREGIDO CON RUTA ABSOLUTA) ---
 def load_css(file_name):
     try:
-        with open(file_name) as f:
+        # Obtener la ruta del directorio donde está este script (app.py)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Combinar directorio con el nombre del archivo
+        css_path = os.path.join(current_dir, file_name)
+        
+        with open(css_path) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
         st.error(f"⚠️ No se encontró el archivo {file_name}. Asegúrate de que esté en la misma carpeta que app.py.")
@@ -222,10 +227,15 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- CHATBOT ENGINE ---
+# --- CHATBOT ENGINE (CORREGIDO CON RUTA ABSOLUTA PARA PDF) ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    loader = PyPDFLoader("reglamento.pdf")
+    # Obtener ruta absoluta del directorio actual
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Construir ruta completa al PDF
+    pdf_path = os.path.join(current_dir, "reglamento.pdf")
+    
+    loader = PyPDFLoader(pdf_path)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = loader.load_and_split(text_splitter=text_splitter)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
