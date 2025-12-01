@@ -1,147 +1,74 @@
-/*
-================================================
-  CHATBOT DUOC UC - ESTILOS REFORZADOS V3.0
-  [FIX: Fondo, Selectboxes, Inputs y Contraste]
-================================================
-*/
+/* 1. Importamos fuente de emojis de Google */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&family=Source+Sans+Pro:wght@400;600;700;900&display=swap');
 
-/* 1. IMPORTACIONES */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Color+Emoji&display=swap');
-
-/* 2. VARIABLES */
-:root {
-    --duoc-blue: #002342;
-    --duoc-blue-light: #003366;
-    --duoc-blue-dark: #001529;
-    --duoc-yellow: #FFB81C;
-    --duoc-yellow-dark: #E5A519;
-    --bg-primary: #0A0E27;
-    --bg-secondary: #1A1F3A;
-    --bg-card: rgba(255, 255, 255, 0.05);
-    --text-primary: #FFFFFF;
-    --text-secondary: #E0E0E0; /* Texto más claro para mejor lectura */
-    --border-radius-md: 10px;
+/* 2. CONFIGURACIÓN DE FUENTES QUIRÚRGICA (NO ROMPE ICONOS) */
+/* Solo aplicamos fuente a elementos de texto de contenido específico */
+[data-testid="stMarkdownContainer"] p, 
+[data-testid="stMarkdownContainer"] h1, 
+[data-testid="stMarkdownContainer"] h2, 
+[data-testid="stMarkdownContainer"] h3, 
+[data-testid="stMarkdownContainer"] li,
+.stTextInput input, 
+.stTextArea textarea, 
+.stSelectbox div[data-baseweb="select"], 
+.stButton button {
+    font-family: 'Source Sans Pro', 'Noto Color Emoji', sans-serif !important;
 }
 
-/* 3. FONDO PRINCIPAL (CORREGIDO) */
-/* Streamlit usa .stApp, no body para el fondo visible */
-.stApp {
-    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%) !important;
-    background-attachment: fixed !important; /* Para que el fondo no se corte al scrollear */
-}
-
-h1, h2, h3 {
-    color: var(--text-primary) !important;
-    font-family: 'Inter', sans-serif !important;
-}
-
-p, li, div, span {
-    color: var(--text-secondary);
-}
-
-/* 4. INPUTS Y SELECTBOXES (REFORZADO) */
-/* Esto arregla las cajas de "Filtrar por carrera" y "Buscar asignatura" */
-
-div[data-baseweb="select"] > div,
-.stTextInput input {
-    background-color: rgba(20, 25, 45, 0.8) !important; /* Fondo oscuro sólido pero con toque azul */
-    border: 1px solid rgba(255, 184, 28, 0.3) !important; /* Borde amarillo sutil */
-    color: white !important;
-    border-radius: 8px !important;
-}
-
-/* Al hacer click en los inputs */
-div[data-baseweb="select"] > div:hover,
-.stTextInput input:focus {
-    border-color: var(--duoc-yellow) !important;
-    box-shadow: 0 0 10px rgba(255, 184, 28, 0.2) !important;
-}
-
-/* Texto dentro de los selectores */
-div[data-baseweb="select"] span {
-    color: white !important;
-}
-
-/* El menú desplegable (las opciones) */
-ul[data-baseweb="menu"] {
-    background-color: var(--duoc-blue-dark) !important;
-    border: 1px solid var(--duoc-yellow) !important;
-}
-
-li[data-baseweb="option"] {
-    color: white !important;
-}
-
-/* 5. SIDEBAR (BARRA LATERAL) */
-section[data-testid="stSidebar"] {
-    background-color: var(--duoc-blue-dark) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-/* 6. BOTONES (ESTILO DUOC) */
-.stButton > button {
-    background: linear-gradient(90deg, var(--duoc-blue) 0%, var(--duoc-blue-light) 100%) !important;
-    color: white !important;
-    border: 1px solid var(--duoc-yellow) !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-}
-
-.stButton > button:hover {
-    transform: scale(1.02);
-    box-shadow: 0 0 15px rgba(255, 184, 28, 0.4) !important;
-}
-
-/* Botón "Limpiar Filtros" (Secondary) */
-button[kind="secondary"] {
-    background: transparent !important;
-    border: 1px solid white !important;
-}
-
-/* Botón "Anular Ramo" (Primary - Amarillo) */
-/* Streamlit suele asignar la clase primaria a botones destacados */
-div.stButton button:active {
-    background-color: var(--duoc-yellow) !important;
-    color: var(--duoc-blue-dark) !important;
-}
-
-/* 7. CONTENEDORES Y EXPANDERS (GLASSMORPHISM) */
-/* Esto afecta a "Tu Carga Académica" y las secciones */
-[data-testid="stExpander"], 
-div[data-testid="stVerticalBlock"] > div[style*="border"] {
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    border-radius: 12px !important;
-    backdrop-filter: blur(10px);
-}
-
-.streamlit-expanderHeader {
-    background-color: transparent !important;
-    color: var(--duoc-yellow) !important;
+/* 3. BOTONES (Azul Duoc con Texto Blanco) */
+div.stButton > button {
+    background-color: #002342 !important; 
+    color: #FFFFFF !important;            
     font-weight: bold !important;
+    border-radius: 6px !important;
+    border: 1px solid #FFB81C !important; 
+}
+div.stButton > button:hover {
+    background-color: #003366 !important; 
+    border-color: #FFFFFF !important;
+    transform: scale(1.02);
 }
 
-/* 8. MENSAJES DE ALERTA (Success, Info, Error) */
-[data-testid="stNotification"], .stAlert {
-    background-color: rgba(0, 35, 66, 0.6) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    color: white !important;
-    border-radius: 8px;
-}
-
-/* 9. CHATBOT BURBUJAS */
+/* 4. BURBUJAS DE CHAT */
 [data-testid="stChatMessage"] {
-    background-color: rgba(255, 255, 255, 0.05) !important;
-    border-radius: 15px !important;
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
+    background-color: #2C3E50;
+    border: 1px solid #34495E;
+    border-radius: 12px;
+}
+div[data-testid="chatAvatarIcon-assistant"] + div {
+    background-color: #343A40;
+    border: 1px solid #495057;
+    border-radius: 12px;
 }
 
-[data-testid="stChatMessage"][data-testid*="user"] {
-    background-color: rgba(255, 184, 28, 0.1) !important; /* Usuario con toque amarillo */
+/* 5. SIDEBAR (Texto Blanco Específico) */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] label {
+    color: #FFFFFF !important;
 }
 
-/* 10. OCULTAR HEADER DE STREAMLIT (Opcional, se ve más limpio) */
-header[data-testid="stHeader"] {
-    background: transparent !important;
+/* 6. LOGO CONTAINER */
+.sidebar-logo-container {
+    background-color: white;
+    padding: 15px;
+    border-radius: 10px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+/* 7. PESTAÑAS (TABS) */
+.stTabs [data-baseweb="tab"] {
+    color: #ADB5BD !important; /* Gris claro */
+    font-weight: 600 !important;
+    font-size: 16px !important;
+    font-family: 'Source Sans Pro', sans-serif !important; /* Forzamos fuente aquí también */
+}
+.stTabs [aria-selected="true"] {
+    color: #FFB81C !important; /* Amarillo */
+    font-weight: 900 !important;
+    font-size: 20px !important;
+    border-bottom: 3px solid #FFB81C !important;
+    background-color: rgba(255, 184, 28, 0.05) !important;
+    border-radius: 5px 5px 0 0;
 }
