@@ -1,4 +1,4 @@
-# Versión 28.0 (FINAL DEFINITIVA: Inyección de Datos de Calendario + Reglamento)
+# Versión 28.1 (FINAL: Fix AttributeError + Inyección Estable)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -43,7 +43,6 @@ def load_css(file_name):
 load_css("styles.css")
 
 # --- DATOS DUROS DEL CALENDARIO (LA "HOJA DE TRUCOS") ---
-# Esto garantiza precisión 100% en fechas críticas
 DATOS_CALENDARIO = """
 RESUMEN OFICIAL DE FECHAS CLAVE 2026 (Usar esta información con prioridad):
 1. PRIMER SEMESTRE:
@@ -140,12 +139,7 @@ TEXTS = {
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
         "sug_btn3": "📋 Justificar Inasistencia",
         "sug_query3": "¿Cómo justifico una inasistencia?",
-        "system_prompt": f"""
-        INSTRUCCIÓN: Responde en Español formal pero cercano.
-        ROL: Eres un coordinador académico de Duoc UC.
-        DATOS OBLIGATORIOS DEL CALENDARIO:
-        {DATOS_CALENDARIO}
-        """
+        "system_prompt": "INSTRUCCIÓN: Responde en Español formal pero cercano. ROL: Eres un coordinador académico de Duoc UC."
     },
     "en": {
         "label": "English 🇺🇸",
@@ -218,10 +212,7 @@ TEXTS = {
         "sug_query2": "What are the requirements for graduation?",
         "sug_btn3": "📋 Justify Absence",
         "sug_query3": "How do I justify an absence?",
-        "system_prompt": """
-        INSTRUCTION: Respond in English, formal but friendly.
-        ROLE: You are an academic coordinator at Duoc UC.
-        """
+        "system_prompt": "INSTRUCTION: Respond in English, formal but friendly. ROLE: You are an academic coordinator at Duoc UC."
     }
 }
 
@@ -248,54 +239,80 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- CHATBOT ENGINE ---
+# --- CHATBOT ENGINE (MULTI-DOCUMENTO CON INYECCIÓN) ---
 @st.cache_resource
 def inicializar_cadena(language_code):
-    # Carga de archivos (Reglamento)
-    nombres_archivos = ["reglamento.pdf"]
+    # 1. DEFINICIÓN DE ARCHIVOS A CARGAR
+    nombres_archivos = ["reglamento.pdf", "calendario_academico_2026.pdf"]
+    
     base_path = os.path.dirname(os.path.abspath(__file__))
     all_docs = []
     
+    # 2. CARGA DE DOCUMENTOS
     for archivo in nombres_archivos:
         ruta_completa = os.path.join(base_path, archivo)
         try:
             loader = PyPDFLoader(ruta_completa)
-            all_docs.extend(loader.load())
-        except: continue
+            docs_archivo = loader.load()
+            all_docs.extend(docs_archivo)
+            print(f"✅ Cargado: {archivo}")
+        except Exception as e:
+            print(f"⚠️ Error cargando {archivo}: {e}")
+            try:
+                loader = PyPDFLoader(archivo)
+                docs_archivo = loader.load()
+                all_docs.extend(docs_archivo)
+            except:
+                continue
 
     if not all_docs:
-        # Fallback simple si falla la carga para no romper la app
-        st.error("No se pudo cargar el reglamento.")
-    
+        st.error("Error Crítico: No se encontraron documentos PDF.")
+        st.stop()
+
+    # 3. PROCESAMIENTO
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    # Validamos que haya docs antes de split
-    if all_docs:
-        docs_procesados = text_splitter.split_documents(all_docs)
-    else:
-        docs_procesados = []
+    docs_procesados = text_splitter.split_documents(all_docs)
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = Chroma.from_documents(docs_procesados, embeddings)
     
-    if docs_procesados:
-        vector_store = Chroma.from_documents(docs_procesados, embeddings)
-        vector_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
-        bm25_retriever = BM25Retriever.from_documents(docs_procesados)
-        bm25_retriever.k = 7
-        retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
-        
-        # Document chain normal
-        document_chain = create_stuff_documents_chain(
-            ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1),
-            ChatPromptTemplate.from_template(TEXTS[language_code]["system_prompt"] + """
-            CONTEXTO DEL REGLAMENTO: {context}
-            PREGUNTA: {input}
-            RESPUESTA:
-            """)
-        )
-        retrieval_chain = create_retrieval_chain(retriever, document_chain)
-        return retrieval_chain
-    else:
-        return None
+    # K=12 para leer tablas complejas
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": 12})
+    bm25_retriever = BM25Retriever.from_documents(docs_procesados)
+    bm25_retriever.k = 12
+    
+    retriever = EnsembleRetriever(retrievers=[bm25_retriever, vector_retriever], weights=[0.7, 0.3])
+    llm = ChatGroq(api_key=GROQ_API_KEY, model="llama-3.1-8b-instant", temperature=0.1)
+    
+    base_instruction = TEXTS[language_code]["system_prompt"]
+    
+    # 4. PROMPT MAESTRO (CON INYECCIÓN SEGURA)
+    # Aquí inyectamos el calendario usando f-string dentro de la inicialización
+    prompt_template = base_instruction + f"""
+    ROL: Asistente Académico experto.
+    
+    INFORMACIÓN OFICIAL OBLIGATORIA (CALENDARIO):
+    {DATOS_CALENDARIO}
+
+    INSTRUCCIONES DE RESPUESTA:
+    1. Si preguntan por fechas, usa EXCLUSIVAMENTE los datos del calendario de arriba.
+    2. Si preguntan por reglas (notas, asistencia), usa el contexto del Reglamento (abajo).
+    3. Si el texto del PDF parece confuso, ignóralo y usa los datos del calendario inyectados aquí.
+    
+    FIRMA:
+    - Despídete como "Tu Asistente Virtual Duoc UC".
+
+    CONTEXTO ADICIONAL (PDFs):
+    {{context}}
+    
+    PREGUNTA DE {{user_name}}: {{input}}
+    RESPUESTA:
+    """
+    
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    retrieval_chain = create_retrieval_chain(retriever, document_chain)
+    return retrieval_chain
 
 # --- FETCH USERS ---
 def fetch_all_users():
@@ -434,27 +451,6 @@ if st.session_state["authentication_status"] is True:
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
             with st.chat_message("assistant"):
                 with st.spinner(t["chat_thinking"]):
-                    # Usamos el Prompt Maestro que tiene los datos inyectados
-                    prompt_maestro = f"""
-                    ROL: Asistente Académico experto.
-                    
-                    INSTRUCCIONES:
-                    1. Si preguntan por fechas, usa EXCLUSIVAMENTE estos datos oficiales:
-                    {DATOS_CALENDARIO}
-                    
-                    2. Si preguntan por reglas (notas, asistencia), usa el contexto del Reglamento (abajo).
-                    
-                    3. Sé amable y usa listas. Despídete como "Tu Asistente Virtual Duoc UC".
-
-                    CONTEXTO REGLAMENTO:
-                    {{context}}
-                    
-                    PREGUNTA: {{input}}
-                    """
-                    
-                    # Hack para reemplazar el prompt en tiempo de ejecución
-                    retrieval_chain.combine_docs_chain.llm_chain.prompt.template = prompt_maestro
-                    
                     response = retrieval_chain.invoke({"input": prompt, "user_name": user_name})
                     resp = response["answer"]
                 st.write_stream(stream_data(resp))
