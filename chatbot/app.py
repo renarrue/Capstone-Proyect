@@ -1,4 +1,4 @@
-# Versión 40.0 (MASTER FINAL: PDF Ajustado + Feedback + RAG + Admin)
+# Versión 42.0 (MASTER FINAL: Admin Métricas Full + PDF Fix + RAG + Inscripción)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -279,45 +279,68 @@ def generar_pdf_horario(sections, user_name):
     elements = []
     styles = getSampleStyleSheet()
     
-    # Estilo para las celdas que permite ajuste de texto
+    # Estilos personalizados para que el texto no se salga
     cell_style = ParagraphStyle(
         'CellStyle',
+        parent=styles['BodyText'],
+        fontSize=9,
+        leading=11,
+        alignment=TA_CENTER,
+        textColor=colors.whitesmoke
+    )
+    
+    header_style = ParagraphStyle(
+        'HeaderStyle',
         parent=styles['BodyText'],
         fontSize=10,
         leading=12,
         alignment=TA_CENTER,
-        textColor=colors.black
+        textColor=colors.white,
+        fontName='Helvetica-Bold'
     )
-    
+
     elements.append(Paragraph(f"<b>Horario Académico - {user_name}</b>", styles['Title']))
     elements.append(Spacer(1, 0.3*inch))
     
-    data = [['Asignatura', 'Sección', 'Día', 'Horario', 'Profesor']]
+    # Encabezados usando Paragraph
+    headers = [
+        Paragraph('Asignatura', header_style),
+        Paragraph('Sección', header_style),
+        Paragraph('Día', header_style),
+        Paragraph('Horario', header_style),
+        Paragraph('Profesor', header_style)
+    ]
+    
+    data = [headers]
     
     for section in sections:
         subj = section.get('subjects', {})
-        # Usamos Paragraph para permitir saltos de línea automáticos
+        
+        # Datos usando Paragraph para ajuste automático
         name_para = Paragraph(subj.get('name', 'N/A'), cell_style)
         prof_para = Paragraph(section.get('professor_name', 'N/A'), cell_style)
+        code_para = Paragraph(section.get('section_code', 'N/A'), cell_style)
+        day_para = Paragraph(section.get('day_of_week', 'N/A'), cell_style)
+        time_str = f"{section.get('start_time', '')[:5]}-{section.get('end_time', '')[:5]}"
+        time_para = Paragraph(time_str, cell_style)
         
-        data.append([
-            name_para,
-            section.get('section_code', 'N/A'),
-            section.get('day_of_week', 'N/A'),
-            f"{section.get('start_time', '')[:5]}-{section.get('end_time', '')[:5]}",
-            prof_para
-        ])
+        data.append([name_para, code_para, day_para, time_para, prof_para])
     
-    # Ajuste de anchos de columna para dar más espacio al nombre
-    table = Table(data, colWidths=[2.5*inch, 0.8*inch, 0.8*inch, 1.0*inch, 1.5*inch])
+    # Definir anchos fijos para columnas
+    col_widths = [2.5*inch, 1.0*inch, 1.0*inch, 1.0*inch, 1.5*inch]
+    
+    table = Table(data, colWidths=col_widths)
     
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#002342')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#003366')),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), # Centrado vertical
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))
     
     elements.append(table)
@@ -445,7 +468,7 @@ if st.session_state["authentication_status"] is True:
     c1, c2 = st.columns([0.8, 0.2])
     saludo_hora = obtener_saludo_hora()
     c1.subheader(f"{saludo_hora} {user_name}")
-    c1.caption(f"Cuenta: {user_email}")
+    c1.caption(f"{t['login_success']} {user_email}")
     
     if c2.button(t["logout_btn"], use_container_width=True):
         st.session_state["authentication_status"] = None
@@ -454,7 +477,7 @@ if st.session_state["authentication_status"] is True:
 
     tab1, tab2, tab3 = st.tabs([t["tab1"], t["tab2"], t["tab3"]])
 
-    # --- TAB 1: CHATBOT (SOLO CONSULTAS + FEEDBACK ARREGLADO) ---
+    # --- TAB 1: CHATBOT ---
     with tab1:
         if st.button("🧹 Limpiar Chat", use_container_width=True):
             st.session_state.messages = []
@@ -475,7 +498,7 @@ if st.session_state["authentication_status"] is True:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-        # CHIPS (SIN BÚSQUEDA)
+        # CHIPS
         if len(st.session_state.messages) < 2:
             st.markdown(t["sug_header"])
             c1, c2, c3 = st.columns(3)
@@ -521,10 +544,11 @@ if st.session_state["authentication_status"] is True:
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-        # --- FEEDBACK PERSISTENTE (ARREGLADO) ---
+        # --- FEEDBACK PERSISTENTE ---
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
             st.write("---")
-            fb_state_key = "fb_state_active"
+            
+            fb_state_key = "feedback_open"
             if fb_state_key not in st.session_state: st.session_state[fb_state_key] = False
             
             col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
@@ -545,7 +569,7 @@ if st.session_state["authentication_status"] is True:
 
             if st.session_state[fb_state_key]:
                 with st.container():
-                    with st.form(key=f"feedback_form_persistent_{int(time.time())}"):
+                    with st.form(key=f"feedback_form_{int(time.time())}"):
                         st.write(t["feedback_modal_title"])
                         comment = st.text_area(t["feedback_modal_placeholder"])
                         c_sub1, c_sub2 = st.columns(2)
@@ -565,7 +589,7 @@ if st.session_state["authentication_status"] is True:
                             st.session_state[fb_state_key] = False
                             st.rerun()
 
-    # --- TAB 2: INSCRIPCIÓN (CON FILTROS Y EXPORTACIÓN PDF FIX) ---
+    # --- TAB 2: INSCRIPCIÓN ---
     with tab2:
         st.header(t["enroll_title"])
         
@@ -580,11 +604,11 @@ if st.session_state["authentication_status"] is True:
             all_careers = sorted(list(set([s['career'] for s in subjects_data if s.get('career')])))
             all_semesters = sorted(list(set([s['semester'] for s in subjects_data if s.get('semester')])))
             
-            with c_filter1: cat_carrera = st.selectbox(t["filter_career"], ["Todas"] + all_careers)
-            with c_filter2: cat_semestre = st.selectbox(t["filter_sem"], ["Todos"] + [f"Semestre {s}" for s in all_semesters])
+            with c_filter1: cat_carrera = st.selectbox("📂 Filtrar por Carrera", ["Todas"] + all_careers)
+            with c_filter2: cat_semestre = st.selectbox("🎓 Filtrar por Semestre", ["Todos"] + [f"Semestre {s}" for s in all_semesters])
             with c_reset:
                 st.write(""); st.write("")
-                if st.button(t["reset_btn"]): st.rerun()
+                if st.button("🔄 Limpiar"): pass
 
             filtered_subjects = subjects_data
             if cat_carrera != "Todas": filtered_subjects = [s for s in filtered_subjects if s['career'] == cat_carrera]
@@ -593,7 +617,7 @@ if st.session_state["authentication_status"] is True:
                 filtered_subjects = [s for s in filtered_subjects if s['semester'] == sem_num]
 
             st.markdown("---")
-            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None, placeholder="Selecciona una asignatura...")
+            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None, placeholder=f"Se encontraron {len(filtered_subjects)} asignaturas...")
             
             if sel_name:
                 sid = next(s['id'] for s in subjects_data if s['name'] == sel_name)
@@ -645,25 +669,46 @@ if st.session_state["authentication_status"] is True:
         else:
             st.info("No tienes ramos inscritos.")
 
-    # --- TAB 3: ADMIN ---
+    # --- TAB 3: ADMIN (METRICAS RESTAURADAS) ---
     with tab3:
         st.header(t["admin_title"])
         pwd = st.text_input(t["admin_pass_label"], type="password")
         if pwd == ADMIN_PASSWORD:
             st.success(t["admin_success"])
             col1, col2, col3 = st.columns(3)
+            
+            # Métricas Restauradas
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
-            feedbacks = supabase.table('feedback').select('rating').execute().data
-            likes = len([f for f in feedbacks if f['rating'] == 'good'])
             
-            col1.metric("Usuarios", total_users)
-            col2.metric("Interacciones", total_chats)
-            col3.metric("Likes", likes)
+            # Lógica de Feedback Detallado
+            feedbacks_all = supabase.table('feedback').select('rating').execute().data
+            
+            if feedbacks_all:
+                total_feedback_count = len(feedbacks_all)
+                likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
+                dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
+                
+                satisfaction_rate = int((likes / total_feedback_count) * 100) if total_feedback_count > 0 else 0
+            else:
+                total_feedback_count = 0
+                likes = 0
+                dislikes = 0
+                satisfaction_rate = 0
+            
+            # Métricas Visuales
+            col1.metric("Usuarios Registrados", total_users)
+            col2.metric("Interacciones Totales", total_chats)
+            col3.metric("Satisfacción", f"{satisfaction_rate}%", f"{total_feedback_count} votos")
+            
+            # Sub-métricas adicionales
+            c_a, c_b = st.columns(2)
+            c_a.metric("👍 Feedbacks Positivos", likes)
+            c_b.metric("👎 Reportes Negativos", dislikes, delta_color="inverse")
             
             if st.button(t["admin_update_btn"]): st.rerun()
             
-            st.subheader("Registro de Feedback")
+            st.subheader("Registro Detallado de Feedback")
             try:
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
@@ -696,11 +741,11 @@ else:
                 st.error(t["login_failed"])
                 
     with st.sidebar:
-        st.subheader(t["reg_header"])
-        n = st.text_input(t["reg_name"])
-        e = st.text_input(t["reg_email"])
-        p = st.text_input(t["reg_pass"], type="password")
-        if st.button(t["reg_btn"]):
+        st.subheader("Registro")
+        n = st.text_input("Nombre")
+        e = st.text_input("Email Duoc")
+        p = st.text_input("Clave", type="password")
+        if st.button("Crear Cuenta"):
             hashed = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
             try:
                 supabase.table('profiles').insert({'email': e, 'full_name': n, 'password_hash': hashed}).execute()
