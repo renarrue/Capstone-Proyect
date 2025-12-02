@@ -1,4 +1,4 @@
-# Versión 44.0 (MASTER: Admin Login Fix + Inscripción Segura + RAG)
+# Versión 46.0 (MASTER FINAL: Admin Dashboard Restaurado + Todo Funcional)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -170,8 +170,8 @@ TEXTS = {
         "sug_query1": "¿Cuándo comienzan las clases este semestre?",
         "sug_btn2": "🎓 Requisitos Titulación",
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
-        "sug_btn3": "🔍 Buscar Ramo",
-        "sug_query3": "Quiero buscar la asignatura de Portafolio",
+        "sug_btn3": "📋 Justificar Inasistencia",
+        "sug_query3": "¿Cómo justifico una inasistencia?",
         "system_prompt": "INSTRUCCIÓN: Responde en Español formal pero cercano. ROL: Eres un coordinador académico de Duoc UC."
     },
     "en": {
@@ -313,6 +313,7 @@ def generar_pdf_horario(sections, user_name):
     
     for section in sections:
         subj = section.get('subjects', {})
+        
         name_para = Paragraph(subj.get('name', 'N/A'), cell_style)
         prof_para = Paragraph(section.get('professor_name', 'N/A'), cell_style)
         code_para = Paragraph(section.get('section_code', 'N/A'), cell_style)
@@ -458,7 +459,7 @@ with col_title2: st.title(t["title"])
 
 # --- AUTH STATE ---
 if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
-if "admin_auth" not in st.session_state: st.session_state.admin_auth = False # Estado del panel Admin
+if "admin_auth" not in st.session_state: st.session_state.admin_auth = False
 
 # ==========================================
 # APP PRINCIPAL
@@ -484,7 +485,7 @@ if st.session_state["authentication_status"] is True:
     
     if c2.button(t["logout_btn"], use_container_width=True):
         st.session_state["authentication_status"] = None
-        st.session_state.admin_auth = False # Cerrar admin al salir
+        st.session_state.admin_auth = False
         st.session_state.clear()
         st.rerun()
 
@@ -555,7 +556,7 @@ if st.session_state["authentication_status"] is True:
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-        # FEEDBACK PERSISTENTE
+        # FEEDBACK
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
             st.write("---")
             fb_state_key = "feedback_open"
@@ -585,7 +586,7 @@ if st.session_state["authentication_status"] is True:
                             st.session_state[fb_state_key] = False
                             st.rerun()
 
-    # --- TAB 2: INSCRIPCIÓN (CON PROTECCIÓN DUPLICADOS) ---
+    # --- TAB 2: INSCRIPCIÓN ---
     with tab2:
         st.header(t["enroll_title"])
         @st.cache_data(ttl=60)
@@ -612,7 +613,7 @@ if st.session_state["authentication_status"] is True:
                 filtered_subjects = [s for s in filtered_subjects if s['semester'] == sem_num]
 
             st.markdown("---")
-            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None, placeholder=f"Se encontraron {len(filtered_subjects)} asignaturas...")
+            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None)
             
             if sel_name:
                 sid = next(s['id'] for s in subjects_data if s['name'] == sel_name)
@@ -627,19 +628,16 @@ if st.session_state["authentication_status"] is True:
                         col_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
-                                # PROTECCIÓN ANTI-DUPLICADOS
+                                # FIX DUPLICADOS
                                 existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
                                 if existe:
-                                    st.warning("⚠️ Ya estás inscrito en esta sección.")
+                                    st.warning("⚠️ Ya inscrito.")
                                 else:
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
                                     st.cache_data.clear()
                                     time.sleep(1); st.rerun()
-                        else:
-                            col_b.button("Lleno", disabled=True, key=sec['id'])
-        else:
-            st.error("No se pudo cargar el catálogo.")
+                        else: col_b.button("Lleno", disabled=True, key=sec['id'])
 
         st.divider()
         st.subheader("Tu Horario")
@@ -660,11 +658,10 @@ if st.session_state["authentication_status"] is True:
                         st.rerun()
         else: st.info("Sin ramos.")
 
-    # --- TAB 3: ADMIN (LOGIN PERSISTENTE) ---
+    # --- TAB 3: ADMIN (DASHBOARD RESTAURADO) ---
     with tab3:
         st.header(t["admin_title"])
         
-        # Si NO está logueado como admin
         if not st.session_state.admin_auth:
             pwd = st.text_input(t["admin_pass_label"], type="password")
             if st.button("Ingresar al Panel"):
@@ -673,42 +670,64 @@ if st.session_state["authentication_status"] is True:
                     st.rerun()
                 else:
                     st.error("Clave incorrecta")
-        
-        # Si SÍ está logueado como admin
         else:
             st.success(t["admin_success"])
-            if st.button("Cerrar Panel Admin"):
+            if st.button("Salir del Panel"):
                 st.session_state.admin_auth = False
                 st.rerun()
-
-            # DASHBOARD RESTAURADO (4 Columnas)
+            
+            st.markdown("### Métricas Generales")
+            
+            # MÉTRICAS EN 4 COLUMNAS COMO PEDISTE
             col1, col2, col3, col4 = st.columns(4)
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
             
+            # Lógica de Feedback
             feedbacks_all = supabase.table('feedback').select('rating').execute().data
             likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
             total_fb = len(feedbacks_all) if feedbacks_all else 0
-            satisfaction = int((likes / total_fb * 100)) if total_fb > 0 else 0
+            satisfaction = f"{(likes / total_fb * 100):.1f}%" if total_fb > 0 else "0%"
             
-            col1.metric("Usuarios", total_users)
-            col2.metric("Interacciones", total_chats)
-            col3.metric("Satisfacción", f"{satisfaction}%")
-            col4.metric("Negativos", dislikes, delta="-Alertas" if dislikes > 0 else "Ok", delta_color="inverse")
+            col1.metric("👥 Usuarios Totales", total_users)
+            col2.metric("💬 Feedbacks Recibidos", total_fb)
+            col3.metric("👍 Tasa Satisfacción", satisfaction)
+            col4.metric("🚨 Reportes Negativos", dislikes)
             
-            st.subheader("Registro de Feedback")
+            if st.button(t["admin_update_btn"]): st.rerun()
+            
+            st.markdown("🔥 Mostrar solo Feedback Negativo (Errores)")
+            st.write("Cargando detalles...")
+            
+            st.subheader(f"Registro Detallado ({total_fb} filas)")
             try:
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
                     df = pd.DataFrame(fb_data)
+                    # Limpieza y renombramiento de columnas para que se vea igual a la foto
                     if 'profiles' in df.columns:
                         df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
-                        df = df.drop(columns=['profiles'])
-                    st.dataframe(df)
-                else: st.info("Sin feedback aún.")
-            except: pass
+                    
+                    # Renombrar columnas para que coincida con la foto
+                    df_display = df.rename(columns={
+                        'created_at': 'Fecha/Hora',
+                        'message': 'Pregunta Estudiante/Respuesta', # Aproximación
+                        'rating': 'Eval',
+                        'comment': 'Detalle'
+                    })
+                    
+                    # Seleccionar columnas relevantes
+                    cols_to_show = ['Fecha/Hora', 'Eval', 'Detalle', 'Usuario']
+                    # Asegurarse de que existan
+                    existing_cols = [c for c in cols_to_show if c in df_display.columns]
+                    
+                    st.dataframe(df_display[existing_cols])
+                else:
+                    st.info("Sin feedback aún.")
+            except Exception as e:
+                st.error(f"Error cargando datos: {e}")
 
 # --- LOGIN FORM ---
 else:
@@ -721,8 +740,7 @@ else:
             submit = st.form_submit_button(t["login_btn"], use_container_width=True)
             
             if submit:
-                # FIX: Limpiar caché para login fresco
-                fetch_all_users.clear()
+                fetch_all_users.clear() # Limpiar caché
                 all_users = fetch_all_users()
                 if input_email in all_users:
                     stored_hash = all_users[input_email]['password_hash']
@@ -748,5 +766,5 @@ else:
                 try:
                     supabase.table('profiles').insert({'full_name': n, 'email': e, 'password_hash': hashed}).execute()
                     st.success(t["reg_success"])
-                    fetch_all_users.clear() # Limpiar caché para que pueda entrar al tiro
+                    fetch_all_users.clear()
                 except: st.error(t["auth_error"])
