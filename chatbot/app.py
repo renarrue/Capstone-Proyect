@@ -1,4 +1,4 @@
-# Versión 55.0 (FINAL: Corrección Columna is_visible + Validaciones + Visual)
+# Versión 56.0 (FINAL: Admin Panel Mejorado + Texto en vez de ID + Fixes Previos)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -493,13 +493,9 @@ if st.session_state["authentication_status"] is True:
 
     # --- TAB 1: CHATBOT ---
     with tab1:
-        # ----------------------------------------------------
-        # NUEVA LÓGICA DE LIMPIEZA (SOFT DELETE) - V55.0 (Nombre is_visible corregido)
-        # ----------------------------------------------------
         if st.button(t["chat_clear_btn"], use_container_width=True, key="clear_chat"):
             with st.spinner(t["chat_cleaning"]):
                 try:
-                    # CORRECCIÓN: Usamos 'is_visible'
                     supabase.table('chat_history').update({'is_visible': False}).eq('user_id', user_id).execute()
                     st.session_state.messages = []
                     st.toast(t["chat_cleaned"])
@@ -513,10 +509,6 @@ if st.session_state["authentication_status"] is True:
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
-            # ----------------------------------------------------
-            # FILTRO DE VISIBILIDAD - V55.0
-            # ----------------------------------------------------
-            # CORRECCIÓN: Usamos 'is_visible'
             history = supabase.table('chat_history').select('id, role, message')\
                 .eq('user_id', user_id)\
                 .eq('is_visible', True)\
@@ -543,7 +535,6 @@ if st.session_state["authentication_status"] is True:
             
             if sugerencia:
                 st.session_state.messages.append({"role": "user", "content": sugerencia})
-                # CORRECCIÓN: 'is_visible': True
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia, 'is_visible': True}).execute()
                 with st.chat_message("assistant"):
                     with st.spinner(t["chat_thinking"]):
@@ -553,7 +544,6 @@ if st.session_state["authentication_status"] is True:
                             resp = "Error al procesar."
                     st.write(resp)
                 
-                # CORRECCIÓN: 'is_visible': True
                 res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp, 'is_visible': True}).execute()
                 msg_id = res_data.data[0]['id'] if res_data.data else None
                 
@@ -564,7 +554,6 @@ if st.session_state["authentication_status"] is True:
         if prompt := st.chat_input(t["chat_placeholder"]):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
-            # CORRECCIÓN: 'is_visible': True
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt, 'is_visible': True}).execute()
             
             prompt_limpio = prompt.lower().strip().strip("?!.,")
@@ -579,7 +568,6 @@ if st.session_state["authentication_status"] is True:
                         except: resp = "Error de conexión."
                 st.write_stream(stream_data(resp))
             
-            # CORRECCIÓN: 'is_visible': True
             res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp, 'is_visible': True}).execute()
             msg_id = res_data.data[0]['id'] if res_data.data else None
             
@@ -665,9 +653,6 @@ if st.session_state["authentication_status"] is True:
                         col_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
-                                # --------------------------------------------
-                                # VALIDACIONES (DUPLICIDAD Y CHOQUE)
-                                # --------------------------------------------
                                 reg_check = supabase.table('registrations').select('*, sections(*)').eq('user_id', user_id).execute().data
                                 conflicto_asignatura = False
                                 conflicto_horario = False
@@ -679,11 +664,9 @@ if st.session_state["authentication_status"] is True:
                                 if reg_check:
                                     for reg in reg_check:
                                         existing_sec = reg['sections']
-                                        # 1. Misma Asignatura
                                         if existing_sec['subject_id'] == sec['subject_id']:
                                             conflicto_asignatura = True
                                             break
-                                        # 2. Tope de Horario
                                         if existing_sec['day_of_week'] == new_day:
                                             ex_start = datetime.strptime(existing_sec['start_time'], "%H:%M:%S").time()
                                             ex_end = datetime.strptime(existing_sec['end_time'], "%H:%M:%S").time()
@@ -719,9 +702,6 @@ if st.session_state["authentication_status"] is True:
                 s = item['sections']
                 with st.expander(f"📘 {s['subjects']['name']}"):
                     c1, c2 = st.columns([4, 1])
-                    # --------------------------------------------
-                    # VISUALIZACIÓN HORARIA (INICIO - FIN)
-                    # --------------------------------------------
                     c1.write(f"**{s['day_of_week']}** | {s['start_time'][:5]} - {s['end_time'][:5]} | {s['professor_name']}")
                     
                     if c2.button("Anular", key=f"del_{item['id']}"):
@@ -769,20 +749,41 @@ if st.session_state["authentication_status"] is True:
             
             st.subheader(f"Registro Detallado ({total_fb} filas)")
             try:
-                # ADMIN: Sigue viendo todo porque no filtramos por 'is_visible'
-                fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
+                # ----------------------------------------------------
+                # MEJORA VISUAL ADMIN - V56.0
+                # ----------------------------------------------------
+                # Traemos el texto del mensaje desde chat_history
+                fb_data = supabase.table('feedback').select('*, profiles(email), chat_history(message)').order('created_at', desc=True).execute().data
+                
                 if fb_data:
                     df = pd.DataFrame(fb_data)
+                    
+                    # 1. Extraer Email
                     if 'profiles' in df.columns:
                         df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
                         df = df.drop(columns=['profiles'])
                     
+                    # 2. Extraer Texto del Chat (Reemplaza al message_id)
+                    if 'chat_history' in df.columns:
+                        df['Mensaje Evaluado'] = df['chat_history'].apply(lambda x: x['message'] if x else 'No encontrado')
+                        df = df.drop(columns=['chat_history'])
+                    
+                    # 3. Limpieza y Renombrado
                     df = df.rename(columns={
                         'created_at': 'Fecha/Hora',
-                        'message': 'Pregunta/Contexto',
                         'rating': 'Eval',
                         'comment': 'Detalle'
                     })
+                    
+                    # 4. Eliminar columnas técnicas feas (user_id, message_id)
+                    cols_to_drop = ['user_id', 'message_id']
+                    df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+                    
+                    # 5. Reordenar (Opcional, para que se vea bonito)
+                    cols_order = ['Fecha/Hora', 'Usuario', 'Eval', 'Detalle', 'Mensaje Evaluado', 'id']
+                    # Filtramos solo las que existen para evitar errores
+                    df = df[[c for c in cols_order if c in df.columns]]
+                    
                     st.dataframe(df)
                 else:
                     st.info("Sin feedback aún.")
