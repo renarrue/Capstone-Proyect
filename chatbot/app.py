@@ -1,4 +1,4 @@
-# Versión 34.2 (MASTER: Feedback Restaurado + Comentarios Negativos OK)
+# Versión 35.0 (MASTER FINAL: Feedback Restaurado + Inscripción + RAG + Admin)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -125,7 +125,7 @@ TEXTS = {
         "feedback_thanks": "¡Gracias por tu feedback! 👍",
         "feedback_report_sent": "Reporte enviado.",
         "feedback_modal_title": "📝 Cuéntanos qué salió mal:",
-        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta, o la respuesta no tiene sentido...",
+        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta...",
         "btn_send": "Enviar Reporte",
         "btn_cancel": "Omitir",
         "enroll_title": "Toma de Ramos 2025",
@@ -521,7 +521,7 @@ if st.session_state["authentication_status"] is True:
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
                 st.rerun()
 
-        # INPUT CHAT CON EASTER EGGS & FEEDBACK COMPLETO
+        # INPUT CHAT CON EASTER EGGS & FEEDBACK RESTAURADO
         if prompt := st.chat_input(t["chat_placeholder"]):
             # 1. Guardar mensaje usuario
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -547,13 +547,12 @@ if st.session_state["authentication_status"] is True:
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-            # 4. LÓGICA DE FEEDBACK (RESTAURADO)
+            # 4. LÓGICA DE FEEDBACK (AQUÍ ESTÁ LA RESTAURACIÓN)
             with st.container():
                 st.write("") 
                 col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
                 unique_key = datetime.now().strftime("%H%M%S%f")
                 
-                # Estado para controlar la apertura del formulario
                 feedback_key = f"fb_state_{unique_key}"
 
                 with col_f1:
@@ -570,7 +569,7 @@ if st.session_state["authentication_status"] is True:
                     if st.button("👎", key=f"dislike_{unique_key}", help="Reportar error"):
                         st.session_state[feedback_key] = True
 
-                # Bloque condicional que MANTIENE el formulario abierto
+                # Bloque condicional para feedback negativo
                 if st.session_state.get(feedback_key, False):
                     with st.expander(t["feedback_modal_title"], expanded=True):
                         with st.form(key=f"form_{unique_key}"):
@@ -585,7 +584,7 @@ if st.session_state["authentication_status"] is True:
                                     'comment': comment if comment else "Sin detalle"
                                 }).execute()
                                 st.toast(t["feedback_report_sent"])
-                                st.session_state[feedback_key] = False # Cerrar tras enviar
+                                st.session_state[feedback_key] = False 
                                 st.rerun()
 
     # --- TAB 2: INSCRIPCIÓN (CON FILTROS) ---
