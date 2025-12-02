@@ -1,4 +1,4 @@
-# Versión 46.0 (MASTER FINAL: Admin Dashboard Restaurado + Todo Funcional)
+# Versión 46.0 (MASTER: Admin 4-Cols + Fix Login + Anti-Duplicados + Export)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -424,7 +424,7 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
-# --- FETCH USERS CON ID ---
+# --- FETCH USERS CON ID (FIX CRÍTICO) ---
 def fetch_all_users():
     try:
         response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
@@ -458,8 +458,8 @@ with col_title1: st.image(LOGO_ICON_URL, width=70)
 with col_title2: st.title(t["title"])
 
 # --- AUTH STATE ---
-if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
-if "admin_auth" not in st.session_state: st.session_state.admin_auth = False
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
 
 # ==========================================
 # APP PRINCIPAL
@@ -485,7 +485,6 @@ if st.session_state["authentication_status"] is True:
     
     if c2.button(t["logout_btn"], use_container_width=True):
         st.session_state["authentication_status"] = None
-        st.session_state.admin_auth = False
         st.session_state.clear()
         st.rerun()
 
@@ -586,7 +585,7 @@ if st.session_state["authentication_status"] is True:
                             st.session_state[fb_state_key] = False
                             st.rerun()
 
-    # --- TAB 2: INSCRIPCIÓN ---
+    # --- TAB 2: INSCRIPCIÓN (PROTECCIÓN DUPLICADOS) ---
     with tab2:
         st.header(t["enroll_title"])
         @st.cache_data(ttl=60)
@@ -631,7 +630,7 @@ if st.session_state["authentication_status"] is True:
                                 # FIX DUPLICADOS
                                 existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
                                 if existe:
-                                    st.warning("⚠️ Ya inscrito.")
+                                    st.warning("⚠️ Ya inscrito en esta sección.")
                                 else:
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
@@ -658,76 +657,45 @@ if st.session_state["authentication_status"] is True:
                         st.rerun()
         else: st.info("Sin ramos.")
 
-    # --- TAB 3: ADMIN (DASHBOARD RESTAURADO) ---
+    # --- TAB 3: ADMIN (4 COLUMNAS RESTAURADAS) ---
     with tab3:
         st.header(t["admin_title"])
-        
-        if not st.session_state.admin_auth:
-            pwd = st.text_input(t["admin_pass_label"], type="password")
-            if st.button("Ingresar al Panel"):
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state.admin_auth = True
-                    st.rerun()
-                else:
-                    st.error("Clave incorrecta")
-        else:
+        pwd = st.text_input(t["admin_pass_label"], type="password")
+        if pwd == ADMIN_PASSWORD:
             st.success(t["admin_success"])
-            if st.button("Salir del Panel"):
-                st.session_state.admin_auth = False
-                st.rerun()
             
-            st.markdown("### Métricas Generales")
-            
-            # MÉTRICAS EN 4 COLUMNAS COMO PEDISTE
+            # Restauramos las 4 columnas que te gustaban
             col1, col2, col3, col4 = st.columns(4)
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
             
-            # Lógica de Feedback
+            # Cálculo de métricas detallado
             feedbacks_all = supabase.table('feedback').select('rating').execute().data
             likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
             total_fb = len(feedbacks_all) if feedbacks_all else 0
-            satisfaction = f"{(likes / total_fb * 100):.1f}%" if total_fb > 0 else "0%"
+            satisfaction = int((likes / total_fb * 100)) if total_fb > 0 else 0
             
-            col1.metric("👥 Usuarios Totales", total_users)
-            col2.metric("💬 Feedbacks Recibidos", total_fb)
-            col3.metric("👍 Tasa Satisfacción", satisfaction)
-            col4.metric("🚨 Reportes Negativos", dislikes)
+            col1.metric("Usuarios", total_users)
+            col2.metric("Interacciones", total_chats)
+            col3.metric("Likes 👍", likes)
+            # El 4to KPI que querías: "Reportes Negativos" en rojo o Satisfacción
+            col4.metric("Negativos 👎", dislikes, delta="-Reportes" if dislikes > 0 else "Ok", delta_color="inverse")
             
             if st.button(t["admin_update_btn"]): st.rerun()
             
-            st.markdown("🔥 Mostrar solo Feedback Negativo (Errores)")
-            st.write("Cargando detalles...")
-            
-            st.subheader(f"Registro Detallado ({total_fb} filas)")
+            st.subheader("Registro de Feedback")
             try:
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
                     df = pd.DataFrame(fb_data)
-                    # Limpieza y renombramiento de columnas para que se vea igual a la foto
                     if 'profiles' in df.columns:
                         df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
-                    
-                    # Renombrar columnas para que coincida con la foto
-                    df_display = df.rename(columns={
-                        'created_at': 'Fecha/Hora',
-                        'message': 'Pregunta Estudiante/Respuesta', # Aproximación
-                        'rating': 'Eval',
-                        'comment': 'Detalle'
-                    })
-                    
-                    # Seleccionar columnas relevantes
-                    cols_to_show = ['Fecha/Hora', 'Eval', 'Detalle', 'Usuario']
-                    # Asegurarse de que existan
-                    existing_cols = [c for c in cols_to_show if c in df_display.columns]
-                    
-                    st.dataframe(df_display[existing_cols])
-                else:
-                    st.info("Sin feedback aún.")
-            except Exception as e:
-                st.error(f"Error cargando datos: {e}")
+                        df = df.drop(columns=['profiles'])
+                    st.dataframe(df)
+                else: st.info("Sin feedback aún.")
+            except: pass
 
 # --- LOGIN FORM ---
 else:
@@ -740,7 +708,8 @@ else:
             submit = st.form_submit_button(t["login_btn"], use_container_width=True)
             
             if submit:
-                fetch_all_users.clear() # Limpiar caché
+                # FIX: Limpiar caché para asegurar datos frescos
+                fetch_all_users.clear()
                 all_users = fetch_all_users()
                 if input_email in all_users:
                     stored_hash = all_users[input_email]['password_hash']
@@ -766,5 +735,6 @@ else:
                 try:
                     supabase.table('profiles').insert({'full_name': n, 'email': e, 'password_hash': hashed}).execute()
                     st.success(t["reg_success"])
+                    # Limpiar caché para que el nuevo usuario pueda entrar al tiro
                     fetch_all_users.clear()
                 except: st.error(t["auth_error"])
