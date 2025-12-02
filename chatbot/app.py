@@ -1,4 +1,4 @@
-# Versión 35.0 (MASTER FINAL: Feedback Restaurado + Inscripción + RAG + Admin)
+# Versión 35.1 (MASTER FINAL: Fix Feedback Persistente + Todas las Funciones)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -521,16 +521,15 @@ if st.session_state["authentication_status"] is True:
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
                 st.rerun()
 
-        # INPUT CHAT CON EASTER EGGS & FEEDBACK RESTAURADO
+        # INPUT CHAT
         if prompt := st.chat_input(t["chat_placeholder"]):
-            # 1. Guardar mensaje usuario
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
             
             prompt_limpio = prompt.lower().strip().strip("?!.,")
             
-            # 2. Generar respuesta
+            # Generar Respuesta
             with st.chat_message("assistant"):
                 with st.spinner(t["chat_thinking"]):
                     if prompt_limpio in EASTER_EGGS:
@@ -543,49 +542,41 @@ if st.session_state["authentication_status"] is True:
                         except: resp = "Error de conexión."
                 st.write_stream(stream_data(resp))
             
-            # 3. Guardar respuesta asistente
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-            # 4. LÓGICA DE FEEDBACK (AQUÍ ESTÁ LA RESTAURACIÓN)
-            with st.container():
-                st.write("") 
-                col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
-                unique_key = datetime.now().strftime("%H%M%S%f")
-                
-                feedback_key = f"fb_state_{unique_key}"
+            # --- SECCIÓN DE FEEDBACK PERSISTENTE ---
+            # Creamos un estado único para este intercambio
+            if "fb_active" not in st.session_state: st.session_state.fb_active = False
+            
+            col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
+            
+            with col_f1:
+                if st.button("👍", key=f"like_{int(time.time())}", help="Respuesta útil"):
+                    supabase.table('feedback').insert({'user_id': user_id, 'message': resp[:500], 'rating': 'good', 'comment': 'Voto positivo'}).execute()
+                    st.toast(t["feedback_thanks"])
 
-                with col_f1:
-                    if st.button("👍", key=f"like_{unique_key}", help="Respuesta útil"):
-                        supabase.table('feedback').insert({
-                            'user_id': user_id,
-                            'message': resp[:500],
-                            'rating': 'good',
-                            'comment': 'Voto positivo'
-                        }).execute()
-                        st.toast(t["feedback_thanks"])
+            with col_f2:
+                if st.button("👎", key=f"dislike_{int(time.time())}", help="Reportar error"):
+                    st.session_state.fb_active = True # Activa el formulario y persiste
 
-                with col_f2:
-                    if st.button("👎", key=f"dislike_{unique_key}", help="Reportar error"):
-                        st.session_state[feedback_key] = True
-
-                # Bloque condicional para feedback negativo
-                if st.session_state.get(feedback_key, False):
-                    with st.expander(t["feedback_modal_title"], expanded=True):
-                        with st.form(key=f"form_{unique_key}"):
-                            comment = st.text_area(t["feedback_modal_placeholder"])
-                            btn_send = st.form_submit_button(t["btn_send"])
+            # Mostrar formulario si el estado está activo
+            if st.session_state.fb_active:
+                with st.container(): # Usamos container para que se vea integrado
+                    with st.form(key=f"fb_form_{int(time.time())}"):
+                        st.write(t["feedback_modal_title"])
+                        comment = st.text_area(t["feedback_modal_placeholder"])
+                        c_sub1, c_sub2 = st.columns(2)
+                        
+                        if c_sub1.form_submit_button(t["btn_send"]):
+                            supabase.table('feedback').insert({'user_id': user_id, 'message': resp[:500], 'rating': 'bad', 'comment': comment if comment else "Sin detalle"}).execute()
+                            st.toast(t["feedback_report_sent"])
+                            st.session_state.fb_active = False # Cierra formulario
+                            st.rerun()
                             
-                            if btn_send:
-                                supabase.table('feedback').insert({
-                                    'user_id': user_id,
-                                    'message': resp[:500],
-                                    'rating': 'bad',
-                                    'comment': comment if comment else "Sin detalle"
-                                }).execute()
-                                st.toast(t["feedback_report_sent"])
-                                st.session_state[feedback_key] = False 
-                                st.rerun()
+                        if c_sub2.form_submit_button(t["btn_cancel"]):
+                            st.session_state.fb_active = False # Cierra formulario
+                            st.rerun()
 
     # --- TAB 2: INSCRIPCIÓN (CON FILTROS) ---
     with tab2:
@@ -598,7 +589,6 @@ if st.session_state["authentication_status"] is True:
         subjects_data = supabase.table('subjects').select('*').execute().data
         
         if subjects_data:
-            # Filtros
             c_filter1, c_filter2, c_reset = st.columns([2, 2, 1])
             all_careers = sorted(list(set([s['career'] for s in subjects_data if s.get('career')])))
             all_semesters = sorted(list(set([s['semester'] for s in subjects_data if s.get('semester')])))
