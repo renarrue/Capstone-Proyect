@@ -1,4 +1,4 @@
-# Versión 42.0 (MASTER FINAL: Admin Métricas Full + PDF Fix + RAG + Inscripción)
+# Versión 43.0 (FIX CRÍTICO: Login ID + Registro Restaurado)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -170,8 +170,8 @@ TEXTS = {
         "sug_query1": "¿Cuándo comienzan las clases este semestre?",
         "sug_btn2": "🎓 Requisitos Titulación",
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
-        "sug_btn3": "🔍 Buscar Ramo",
-        "sug_query3": "Quiero buscar la asignatura de Portafolio",
+        "sug_btn3": "📋 Justificar Inasistencia",
+        "sug_query3": "¿Cómo justifico una inasistencia?",
         "system_prompt": "INSTRUCCIÓN: Responde en Español formal pero cercano. ROL: Eres un coordinador académico de Duoc UC."
     },
     "en": {
@@ -279,7 +279,7 @@ def generar_pdf_horario(sections, user_name):
     elements = []
     styles = getSampleStyleSheet()
     
-    # Estilos personalizados para que el texto no se salga
+    # Estilo para celda con ajuste de texto
     cell_style = ParagraphStyle(
         'CellStyle',
         parent=styles['BodyText'],
@@ -429,19 +429,35 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
+# --- FUNCION CRÍTICA CORREGIDA: FETCH USERS CON ID ---
 def fetch_all_users():
     try:
-        response = supabase.table('profiles').select("email, full_name, password_hash").execute()
+        # Agregamos 'id' explícitamente al select
+        response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
         if not response.data: return {}
-        users_dict = {u['email']: u for u in response.data}
+        
+        users_dict = {}
+        for user in response.data:
+            # Estructura correcta para que coincida con la lógica de login
+            users_dict[user['email']] = {
+                'id': user['id'],
+                'full_name': user['full_name'],
+                'password_hash': user['password_hash']
+            }
         return users_dict
     except: return {}
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown(f"""<div class="sidebar-logo-container"><img src="{LOGO_BANNER_URL}" style="width: 100%;"></div>""", unsafe_allow_html=True)
-    lang_option = st.selectbox("🌐 Language / Idioma", ["Español 🇨🇱", "English 🇺🇸"])
-    lang_code = "es" if "Español" in lang_option else "en"
+    st.markdown(f"""
+        <div class="sidebar-logo-container">
+            <img src="{LOGO_BANNER_URL}" style="width: 100%; max-width: 180px;">
+        </div>
+    """, unsafe_allow_html=True)
+    
+    lang_option = st.selectbox("🌐 Language / Idioma", ["Español 🇨🇱", "English 🇺🇸"], format_func=lambda x: TEXTS["es" if "Español" in x else "en"]["label"])
+    if "Español" in lang_option: lang_code = "es"
+    else: lang_code = "en"
     t = TEXTS[lang_code]
 
 # --- CABECERA ---
@@ -449,8 +465,9 @@ col_title1, col_title2 = st.columns([0.1, 0.9])
 with col_title1: st.image(LOGO_ICON_URL, width=70)
 with col_title2: st.title(t["title"])
 
-# --- AUTH STATE ---
-if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
+# --- ESTADO DE AUTENTICACIÓN ---
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
 
 # ==========================================
 # APP PRINCIPAL
@@ -460,14 +477,22 @@ if st.session_state["authentication_status"] is True:
     user_email = st.session_state["username"]
     
     if 'user_id' not in st.session_state:
-        user_id_response = supabase.table('profiles').select('id').eq('email', user_email).execute()
-        if user_id_response.data: st.session_state.user_id = user_id_response.data[0]['id']
-        else: st.stop()
+        # Fallback por si se pierde el user_id
+        try:
+            user_id_response = supabase.table('profiles').select('id').eq('email', user_email).execute()
+            if user_id_response.data: 
+                st.session_state.user_id = user_id_response.data[0]['id']
+            else: 
+                st.error("Error crítico: Usuario no encontrado en BD.")
+                st.stop()
+        except: st.stop()
+        
     user_id = st.session_state.user_id
 
     c1, c2 = st.columns([0.8, 0.2])
-    saludo_hora = obtener_saludo_hora()
-    c1.subheader(f"{saludo_hora} {user_name}")
+    # SALUDO DINÁMICO
+    saludo = obtener_saludo_hora()
+    c1.subheader(f"{saludo} {user_name}")
     c1.caption(f"{t['login_success']} {user_email}")
     
     if c2.button(t["logout_btn"], use_container_width=True):
@@ -479,48 +504,80 @@ if st.session_state["authentication_status"] is True:
 
     # --- TAB 1: CHATBOT ---
     with tab1:
-        if st.button("🧹 Limpiar Chat", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
+        if st.button(t["chat_clear_btn"], use_container_width=True, key="clear_chat"):
+            with st.spinner(t["chat_cleaning"]):
+                try:
+                    supabase.table('chat_history').update({'is_visible': False}).eq('user_id', user_id).execute()
+                    st.session_state.messages = []
+                    welcome_msg = t["chat_welcome_clean"].format(name=user_name)
+                    res = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': welcome_msg}).execute()
+                    if res.data:
+                        st.session_state.messages.append({"id": res.data[0]['id'], "role": "assistant", "content": welcome_msg})
+                    st.success(t["chat_cleaned"])
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
         
         st.divider()
         retrieval_chain = inicializar_cadena(lang_code)
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
-            history = supabase.table('chat_history').select('role, message').eq('user_id', user_id).order('created_at').execute()
+            history = supabase.table('chat_history').select('id, role, message').eq('user_id', user_id).eq('is_visible', True).order('created_at').execute()
             for row in history.data:
-                st.session_state.messages.append({"role": row['role'], "content": row['message']})
+                st.session_state.messages.append({"id": row['id'], "role": row['role'], "content": row['message']})
             if not st.session_state.messages:
-                st.session_state.messages.append({"role": "assistant", "content": f"¡Hola {user_name}! 👋"})
+                welcome_msg = t["chat_welcome"].format(name=user_name)
+                res = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': welcome_msg}).execute()
+                if res.data:
+                    st.session_state.messages.append({"id": res.data[0]['id'], "role": "assistant", "content": welcome_msg})
 
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                if msg["role"] == "assistant" and msg["id"]:
+                    col_fb1, col_fb2, _ = st.columns([1,1,8])
+                    if col_fb1.button("👍", key=f"up_{msg['id']}"):
+                        supabase.table('feedback').insert({"message_id": msg['id'], "user_id": user_id, "rating": "good"}).execute()
+                        st.toast(t["feedback_thanks"])
+                    
+                    reason_key = f"show_reason_{msg['id']}"
+                    if col_fb2.button("👎", key=f"down_{msg['id']}"): st.session_state[reason_key] = True
+                    
+                    if st.session_state.get(reason_key, False):
+                        with st.form(key=f"form_{msg['id']}", enter_to_submit=False):
+                            st.write(t["feedback_modal_title"])
+                            comment_text = st.text_area("...", placeholder=t["feedback_modal_placeholder"], label_visibility="collapsed")
+                            c_sub1, c_sub2 = st.columns(2)
+                            if c_sub1.form_submit_button(t["btn_send"]):
+                                supabase.table('feedback').insert({"message_id": msg['id'], "user_id": user_id, "rating": "bad", "comment": comment_text}).execute()
+                                st.toast(t["feedback_report_sent"])
+                                st.session_state[reason_key] = False
+                                st.rerun()
+                            if c_sub2.form_submit_button(t["btn_cancel"]):
+                                st.session_state[reason_key] = False
+                                st.rerun()
 
-        # CHIPS
-        if len(st.session_state.messages) < 2:
+        # --- CHIPS DE SUGERENCIAS ---
+        if not st.session_state.messages or (len(st.session_state.messages) == 1 and st.session_state.messages[0]['role'] == 'assistant'):
             st.markdown(t["sug_header"])
-            c1, c2, c3 = st.columns(3)
+            col_sug1, col_sug2, col_sug3 = st.columns(3)
             sugerencia = None
-            if c1.button(t["sug_btn1"]): sugerencia = t["sug_query1"]
-            if c2.button(t["sug_btn2"]): sugerencia = t["sug_query2"]
-            if c3.button(t["sug_btn3"]): sugerencia = t["sug_query3"]
+            if col_sug1.button(t["sug_btn1"]): sugerencia = t["sug_query1"]
+            if col_sug2.button(t["sug_btn2"]): sugerencia = t["sug_query2"]
+            if col_sug3.button(t["sug_btn3"]): sugerencia = t["sug_query3"]
             
             if sugerencia:
                 st.session_state.messages.append({"role": "user", "content": sugerencia})
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia}).execute()
-                
-                with st.chat_message("assistant"):
-                    with st.spinner(t["chat_thinking"]):
-                        try:
-                            resp = retrieval_chain.invoke({"input": sugerencia, "user_name": user_name})["answer"]
-                        except Exception as e:
-                            resp = "Error al procesar."
-                    st.write(resp)
-                
-                st.session_state.messages.append({"role": "assistant", "content": resp})
-                supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+                with st.spinner(t["chat_thinking"]):
+                    try:
+                        response = retrieval_chain.invoke({"input": sugerencia, "user_name": user_name})
+                        resp = response["answer"]
+                        res_bot = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+                        st.session_state.messages.append({"id": res_bot.data[0]['id'], "role": "assistant", "content": resp})
+                    except Exception as e:
+                        st.error(f"Error: {e}")
                 st.rerun()
 
         # INPUT CHAT
@@ -537,57 +594,13 @@ if st.session_state["authentication_status"] is True:
                         resp = EASTER_EGGS[prompt_limpio]
                     else:
                         try:
-                            resp = retrieval_chain.invoke({"input": prompt, "user_name": user_name})["answer"]
-                        except: resp = "Error de conexión."
+                            response = retrieval_chain.invoke({"input": prompt, "user_name": user_name})
+                            resp = response["answer"]
+                        except: resp = "Error conexión."
                 st.write_stream(stream_data(resp))
             
-            st.session_state.messages.append({"role": "assistant", "content": resp})
-            supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
-
-        # --- FEEDBACK PERSISTENTE ---
-        if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
-            st.write("---")
-            
-            fb_state_key = "feedback_open"
-            if fb_state_key not in st.session_state: st.session_state[fb_state_key] = False
-            
-            col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
-            
-            with col_f1:
-                if st.button("👍", key=f"btn_like_{int(time.time())}", help="Respuesta útil"):
-                    supabase.table('feedback').insert({
-                        'user_id': user_id,
-                        'message': st.session_state.messages[-1]["content"][:500],
-                        'rating': 'good',
-                        'comment': 'Voto positivo'
-                    }).execute()
-                    st.toast(t["feedback_thanks"])
-
-            with col_f2:
-                if st.button("👎", key=f"btn_dislike_{int(time.time())}", help="Reportar error"):
-                    st.session_state[fb_state_key] = True
-
-            if st.session_state[fb_state_key]:
-                with st.container():
-                    with st.form(key=f"feedback_form_{int(time.time())}"):
-                        st.write(t["feedback_modal_title"])
-                        comment = st.text_area(t["feedback_modal_placeholder"])
-                        c_sub1, c_sub2 = st.columns(2)
-                        
-                        if c_sub1.form_submit_button(t["btn_send"]):
-                            supabase.table('feedback').insert({
-                                'user_id': user_id,
-                                'message': st.session_state.messages[-1]["content"][:500],
-                                'rating': 'bad',
-                                'comment': comment if comment else "Sin detalle"
-                            }).execute()
-                            st.toast(t["feedback_report_sent"])
-                            st.session_state[fb_state_key] = False
-                            st.rerun()
-                        
-                        if c_sub2.form_submit_button(t["btn_cancel"]):
-                            st.session_state[fb_state_key] = False
-                            st.rerun()
+            res_bot = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+            st.session_state.messages.append({"id": res_bot.data[0]['id'], "role": "assistant", "content": resp})
 
     # --- TAB 2: INSCRIPCIÓN ---
     with tab2:
@@ -604,11 +617,11 @@ if st.session_state["authentication_status"] is True:
             all_careers = sorted(list(set([s['career'] for s in subjects_data if s.get('career')])))
             all_semesters = sorted(list(set([s['semester'] for s in subjects_data if s.get('semester')])))
             
-            with c_filter1: cat_carrera = st.selectbox("📂 Filtrar por Carrera", ["Todas"] + all_careers)
-            with c_filter2: cat_semestre = st.selectbox("🎓 Filtrar por Semestre", ["Todos"] + [f"Semestre {s}" for s in all_semesters])
+            with c_filter1: cat_carrera = st.selectbox(t["filter_career"], ["Todas"] + all_careers)
+            with c_filter2: cat_semestre = st.selectbox(t["filter_sem"], ["Todos"] + [f"Semestre {s}" for s in all_semesters])
             with c_reset:
                 st.write(""); st.write("")
-                if st.button("🔄 Limpiar"): pass
+                if st.button(t["reset_btn"]): st.rerun()
 
             filtered_subjects = subjects_data
             if cat_carrera != "Todas": filtered_subjects = [s for s in filtered_subjects if s['career'] == cat_carrera]
@@ -650,10 +663,8 @@ if st.session_state["authentication_status"] is True:
         if schedule:
             c_exp1, c_exp2 = st.columns(2)
             sections_data = [r['sections'] for r in schedule]
-            
             pdf_file = generar_pdf_horario(sections_data, user_name)
             c_exp1.download_button("📄 Descargar Horario PDF", pdf_file, "horario.pdf", "application/pdf", use_container_width=True)
-            
             ics_file = generar_ics_horario(sections_data, user_name)
             c_exp2.download_button("📅 Exportar a Google Calendar", ics_file, "horario.ics", "text/calendar", use_container_width=True)
 
@@ -680,35 +691,16 @@ if st.session_state["authentication_status"] is True:
             # Métricas Restauradas
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
-            
-            # Lógica de Feedback Detallado
             feedbacks_all = supabase.table('feedback').select('rating').execute().data
+            likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             
-            if feedbacks_all:
-                total_feedback_count = len(feedbacks_all)
-                likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
-                dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
-                
-                satisfaction_rate = int((likes / total_feedback_count) * 100) if total_feedback_count > 0 else 0
-            else:
-                total_feedback_count = 0
-                likes = 0
-                dislikes = 0
-                satisfaction_rate = 0
-            
-            # Métricas Visuales
-            col1.metric("Usuarios Registrados", total_users)
-            col2.metric("Interacciones Totales", total_chats)
-            col3.metric("Satisfacción", f"{satisfaction_rate}%", f"{total_feedback_count} votos")
-            
-            # Sub-métricas adicionales
-            c_a, c_b = st.columns(2)
-            c_a.metric("👍 Feedbacks Positivos", likes)
-            c_b.metric("👎 Reportes Negativos", dislikes, delta_color="inverse")
+            col1.metric("Usuarios", total_users)
+            col2.metric("Interacciones", total_chats)
+            col3.metric("Likes", likes)
             
             if st.button(t["admin_update_btn"]): st.rerun()
             
-            st.subheader("Registro Detallado de Feedback")
+            st.subheader("Registro de Feedback")
             try:
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
@@ -722,32 +714,54 @@ if st.session_state["authentication_status"] is True:
             except Exception as e:
                 st.error(f"Error cargando datos: {e}")
 
-# --- LOGIN FORM ---
+# --- LOGIN FORM (CON RESTAURACIÓN DE REGISTRO) ---
 else:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.subheader(t["login_title"])
-        email = st.text_input(t["login_user"])
-        pswd = st.text_input(t["login_pass"], type="password")
-        if st.button(t["login_btn"], use_container_width=True):
-            users = fetch_all_users()
-            if email in users and bcrypt.checkpw(pswd.encode(), users[email]['password_hash'].encode()):
-                st.session_state["authentication_status"] = True
-                st.session_state["name"] = users[email]['full_name']
-                st.session_state["username"] = email
-                st.session_state["user_id"] = users[email]['id']
-                st.rerun()
-            else:
-                st.error(t["login_failed"])
-                
+        with st.form("login_form", enter_to_submit=False):
+            input_email = st.text_input(t["login_user"])
+            input_pass = st.text_input(t["login_pass"], type="password")
+            submit = st.form_submit_button(t["login_btn"], use_container_width=True)
+            
+            if submit:
+                all_users = fetch_all_users()
+                if input_email in all_users:
+                    # Validar contraseña
+                    stored_hash = all_users[input_email]['password_hash']
+                    if bcrypt.checkpw(input_pass.encode('utf-8'), stored_hash.encode('utf-8')):
+                        st.session_state["authentication_status"] = True
+                        st.session_state["name"] = all_users[input_email]['full_name']
+                        st.session_state["username"] = input_email
+                        st.session_state["user_id"] = all_users[input_email]['id'] # Aquí estaba el error antes
+                        st.rerun()
+                    else:
+                        st.error(t["login_failed"])
+                else:
+                    st.error(t["login_failed"])
+
+    # --- SIDEBAR REGISTRO (RESTAURADO) ---
     with st.sidebar:
-        st.subheader("Registro")
-        n = st.text_input("Nombre")
-        e = st.text_input("Email Duoc")
-        p = st.text_input("Clave", type="password")
-        if st.button("Crear Cuenta"):
-            hashed = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
-            try:
-                supabase.table('profiles').insert({'email': e, 'full_name': n, 'password_hash': hashed}).execute()
-                st.success(t["reg_success"])
-            except: st.error(t["auth_error"])
+        st.subheader(t["reg_header"])
+        with st.form("reg_form"):
+            n = st.text_input(t["reg_name"])
+            e = st.text_input(t["reg_email"])
+            p = st.text_input(t["reg_pass"], type="password")
+            btn_reg = st.form_submit_button(t["reg_btn"])
+            
+            if btn_reg:
+                # Validar que no exista
+                existing = supabase.table('profiles').select('email').eq('email', e).execute().data
+                if existing:
+                    st.error("El correo ya está registrado.")
+                else:
+                    hashed = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    try:
+                        supabase.table('profiles').insert({
+                            'full_name': n, 
+                            'email': e, 
+                            'password_hash': hashed
+                        }).execute()
+                        st.success(t["reg_success"])
+                    except Exception as ex:
+                        st.error(f"Error al crear usuario: {ex}")
