@@ -1,4 +1,4 @@
-# Versión 48.0 (MASTER FINAL: Fix Feedback Keys + Todo Funcional)
+# Versión 51.0 (FINAL: Fix Anular Ramo Cache + Feedback + Admin + Todo)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -272,7 +272,7 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- FUNCIONES DE EXPORTACIÓN (PDF FIX WRAPPING) ---
+# --- FUNCIONES DE EXPORTACIÓN ---
 def generar_pdf_horario(sections, user_name):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -558,34 +558,30 @@ if st.session_state["authentication_status"] is True:
             
             res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
             msg_id = res_data.data[0]['id'] if res_data.data else None
+            
             st.session_state.messages.append({"id": msg_id, "role": "assistant", "content": resp})
             st.rerun()
 
-        # FEEDBACK (FIX KEY STATIC)
+        # FEEDBACK
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
             last_msg = st.session_state.messages[-1]
-            if last_msg.get('id'): # Check if ID exists
+            if last_msg.get('id'): 
                 st.write("---")
-                
-                # Estado único para el feedback actual
                 fb_state_key = "feedback_open"
                 if fb_state_key not in st.session_state: st.session_state[fb_state_key] = False
                 
                 col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
                 with col_f1:
-                    # Llave estática "last_msg_like" para evitar problemas de re-renderizado
-                    if st.button("👍", key="btn_like_last"):
+                    if st.button("👍", key=f"btn_like_{last_msg['id']}"):
                         supabase.table('feedback').insert({'user_id': user_id, 'message_id': last_msg['id'], 'rating': 'good'}).execute()
                         st.toast(t["feedback_thanks"])
-                
                 with col_f2:
-                    # Llave estática "last_msg_dislike"
-                    if st.button("👎", key="btn_dislike_last"):
+                    if st.button("👎", key=f"btn_dislike_{last_msg['id']}"):
                         st.session_state[fb_state_key] = True
 
                 if st.session_state[fb_state_key]:
                     with st.container():
-                        with st.form(key="feedback_form_fixed"):
+                        with st.form(key=f"fb_form_{last_msg['id']}"):
                             st.write(t["feedback_modal_title"])
                             comment = st.text_area(t["feedback_modal_placeholder"])
                             c_s1, c_s2 = st.columns(2)
@@ -652,6 +648,7 @@ if st.session_state["authentication_status"] is True:
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
                                     st.cache_data.clear()
+                                    get_schedule.clear() # FIX DE CACHÉ AQUÍ TAMBIÉN
                                     time.sleep(1); st.rerun()
                         else:
                             col_b.button("Lleno", disabled=True, key=sec['id'])
@@ -674,6 +671,7 @@ if st.session_state["authentication_status"] is True:
                     c1.write(f"{s['day_of_week']} {s['start_time'][:5]} | {s['professor_name']}")
                     if c2.button("Anular", key=f"del_{item['id']}"):
                         supabase.table('registrations').delete().eq('id', item['id']).execute()
+                        get_schedule.clear() # FIX CRÍTICO DE CACHÉ
                         st.rerun()
         else: st.info("Sin ramos.")
 
@@ -700,8 +698,8 @@ if st.session_state["authentication_status"] is True:
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
-            feedbacks_all = supabase.table('feedback').select('rating').execute().data
             
+            feedbacks_all = supabase.table('feedback').select('rating').execute().data
             likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
             total_fb = len(feedbacks_all) if feedbacks_all else 0
@@ -746,7 +744,7 @@ else:
             submit = st.form_submit_button(t["login_btn"], use_container_width=True)
             
             if submit:
-                fetch_all_users.clear() # Limpiar caché
+                fetch_all_users.clear()
                 all_users = fetch_all_users()
                 if input_email in all_users:
                     stored_hash = all_users[input_email]['password_hash']
