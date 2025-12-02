@@ -1,4 +1,4 @@
-# Versión 34.0 (MASTER: Filtros Restaurados + RAG Híbrido + Export + Admin)
+# Versión 34.1 (MASTER: Filtros Restaurados + RAG Híbrido + Export + Admin + Feedback FIXED)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -521,7 +521,7 @@ if st.session_state["authentication_status"] is True:
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
                 st.rerun()
 
-        # INPUT CHAT CON EASTER EGGS
+        # INPUT CHAT CON EASTER EGGS & FEEDBACK
         if prompt := st.chat_input(t["chat_placeholder"]):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
@@ -541,8 +541,45 @@ if st.session_state["authentication_status"] is True:
                         except: resp = "Error de conexión."
                 st.write_stream(stream_data(resp))
             
+            # --- GUARDADO Y FEEDBACK (AQUÍ ESTÁ LA CORRECCIÓN) ---
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+
+            with st.container():
+                st.write("") 
+                cf1, cf2, cf3 = st.columns([0.1, 0.1, 0.8])
+                unique_key = datetime.now().strftime("%H%M%S%f")
+
+                with cf1:
+                    if st.button("👍", key=f"like_{unique_key}", help="Respuesta útil"):
+                        supabase.table('feedback').insert({
+                            'user_id': user_id,
+                            'message': resp[:500],
+                            'rating': 'good',
+                            'comment': 'Voto positivo'
+                        }).execute()
+                        st.toast(t["feedback_thanks"])
+
+                with cf2:
+                    if st.button("👎", key=f"dislike_{unique_key}", help="Reportar problema"):
+                        st.session_state[f"show_feedback_{unique_key}"] = True
+
+                if st.session_state.get(f"show_feedback_{unique_key}"):
+                    with st.expander(t["feedback_modal_title"], expanded=True):
+                        with st.form(key=f"form_{unique_key}"):
+                            comment = st.text_area(t["feedback_modal_placeholder"])
+                            submit = st.form_submit_button(t["btn_send"])
+                            
+                            if submit:
+                                supabase.table('feedback').insert({
+                                    'user_id': user_id,
+                                    'message': resp[:500],
+                                    'rating': 'bad',
+                                    'comment': comment if comment else "Sin comentario"
+                                }).execute()
+                                st.toast(t["feedback_report_sent"])
+                                st.session_state[f"show_feedback_{unique_key}"] = False
+                                st.rerun()
 
     # --- TAB 2: INSCRIPCIÓN (CON FILTROS) ---
     with tab2:
