@@ -1,4 +1,4 @@
-# Versión 34.1 (MASTER: Filtros Restaurados + RAG Híbrido + Export + Admin + Feedback FIXED)
+# Versión 34.2 (MASTER: Feedback Restaurado + Comentarios Negativos OK)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -124,9 +124,9 @@ TEXTS = {
         "chat_thinking": "Procesando...",
         "feedback_thanks": "¡Gracias por tu feedback! 👍",
         "feedback_report_sent": "Reporte enviado.",
-        "feedback_modal_title": "¿Qué podemos mejorar?",
-        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta...",
-        "btn_send": "Enviar Comentario",
+        "feedback_modal_title": "📝 Cuéntanos qué salió mal:",
+        "feedback_modal_placeholder": "Ej: La fecha entregada es incorrecta, o la respuesta no tiene sentido...",
+        "btn_send": "Enviar Reporte",
         "btn_cancel": "Omitir",
         "enroll_title": "Toma de Ramos 2025",
         "filter_career": "📂 Filtrar por Carrera:",
@@ -521,14 +521,16 @@ if st.session_state["authentication_status"] is True:
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
                 st.rerun()
 
-        # INPUT CHAT CON EASTER EGGS & FEEDBACK
+        # INPUT CHAT CON EASTER EGGS & FEEDBACK COMPLETO
         if prompt := st.chat_input(t["chat_placeholder"]):
+            # 1. Guardar mensaje usuario
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
             
             prompt_limpio = prompt.lower().strip().strip("?!.,")
             
+            # 2. Generar respuesta
             with st.chat_message("assistant"):
                 with st.spinner(t["chat_thinking"]):
                     if prompt_limpio in EASTER_EGGS:
@@ -541,16 +543,20 @@ if st.session_state["authentication_status"] is True:
                         except: resp = "Error de conexión."
                 st.write_stream(stream_data(resp))
             
-            # --- GUARDADO Y FEEDBACK (AQUÍ ESTÁ LA CORRECCIÓN) ---
+            # 3. Guardar respuesta asistente
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
+            # 4. LÓGICA DE FEEDBACK (RESTAURADO)
             with st.container():
                 st.write("") 
-                cf1, cf2, cf3 = st.columns([0.1, 0.1, 0.8])
+                col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
                 unique_key = datetime.now().strftime("%H%M%S%f")
+                
+                # Estado para controlar la apertura del formulario
+                feedback_key = f"fb_state_{unique_key}"
 
-                with cf1:
+                with col_f1:
                     if st.button("👍", key=f"like_{unique_key}", help="Respuesta útil"):
                         supabase.table('feedback').insert({
                             'user_id': user_id,
@@ -560,25 +566,26 @@ if st.session_state["authentication_status"] is True:
                         }).execute()
                         st.toast(t["feedback_thanks"])
 
-                with cf2:
-                    if st.button("👎", key=f"dislike_{unique_key}", help="Reportar problema"):
-                        st.session_state[f"show_feedback_{unique_key}"] = True
+                with col_f2:
+                    if st.button("👎", key=f"dislike_{unique_key}", help="Reportar error"):
+                        st.session_state[feedback_key] = True
 
-                if st.session_state.get(f"show_feedback_{unique_key}"):
+                # Bloque condicional que MANTIENE el formulario abierto
+                if st.session_state.get(feedback_key, False):
                     with st.expander(t["feedback_modal_title"], expanded=True):
                         with st.form(key=f"form_{unique_key}"):
                             comment = st.text_area(t["feedback_modal_placeholder"])
-                            submit = st.form_submit_button(t["btn_send"])
+                            btn_send = st.form_submit_button(t["btn_send"])
                             
-                            if submit:
+                            if btn_send:
                                 supabase.table('feedback').insert({
                                     'user_id': user_id,
                                     'message': resp[:500],
                                     'rating': 'bad',
-                                    'comment': comment if comment else "Sin comentario"
+                                    'comment': comment if comment else "Sin detalle"
                                 }).execute()
                                 st.toast(t["feedback_report_sent"])
-                                st.session_state[f"show_feedback_{unique_key}"] = False
+                                st.session_state[feedback_key] = False # Cerrar tras enviar
                                 st.rerun()
 
     # --- TAB 2: INSCRIPCIÓN (CON FILTROS) ---
