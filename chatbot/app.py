@@ -1,4 +1,4 @@
-# Versión 46.0 (MASTER: Admin 4-Cols + Fix Login + Anti-Duplicados + Export)
+# Versión 44.0 (MASTER: Admin Login Fix + Inscripción Segura + RAG)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -170,8 +170,8 @@ TEXTS = {
         "sug_query1": "¿Cuándo comienzan las clases este semestre?",
         "sug_btn2": "🎓 Requisitos Titulación",
         "sug_query2": "¿Cuáles son los requisitos para titularme?",
-        "sug_btn3": "📋 Justificar Inasistencia",
-        "sug_query3": "¿Cómo justifico una inasistencia?",
+        "sug_btn3": "🔍 Buscar Ramo",
+        "sug_query3": "Quiero buscar la asignatura de Portafolio",
         "system_prompt": "INSTRUCCIÓN: Responde en Español formal pero cercano. ROL: Eres un coordinador académico de Duoc UC."
     },
     "en": {
@@ -313,7 +313,6 @@ def generar_pdf_horario(sections, user_name):
     
     for section in sections:
         subj = section.get('subjects', {})
-        
         name_para = Paragraph(subj.get('name', 'N/A'), cell_style)
         prof_para = Paragraph(section.get('professor_name', 'N/A'), cell_style)
         code_para = Paragraph(section.get('section_code', 'N/A'), cell_style)
@@ -424,7 +423,7 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
-# --- FETCH USERS CON ID (FIX CRÍTICO) ---
+# --- FETCH USERS CON ID ---
 def fetch_all_users():
     try:
         response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
@@ -458,8 +457,8 @@ with col_title1: st.image(LOGO_ICON_URL, width=70)
 with col_title2: st.title(t["title"])
 
 # --- AUTH STATE ---
-if "authentication_status" not in st.session_state:
-    st.session_state["authentication_status"] = None
+if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
+if "admin_auth" not in st.session_state: st.session_state.admin_auth = False # Estado del panel Admin
 
 # ==========================================
 # APP PRINCIPAL
@@ -485,6 +484,7 @@ if st.session_state["authentication_status"] is True:
     
     if c2.button(t["logout_btn"], use_container_width=True):
         st.session_state["authentication_status"] = None
+        st.session_state.admin_auth = False # Cerrar admin al salir
         st.session_state.clear()
         st.rerun()
 
@@ -555,7 +555,7 @@ if st.session_state["authentication_status"] is True:
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-        # FEEDBACK
+        # FEEDBACK PERSISTENTE
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
             st.write("---")
             fb_state_key = "feedback_open"
@@ -585,7 +585,7 @@ if st.session_state["authentication_status"] is True:
                             st.session_state[fb_state_key] = False
                             st.rerun()
 
-    # --- TAB 2: INSCRIPCIÓN (PROTECCIÓN DUPLICADOS) ---
+    # --- TAB 2: INSCRIPCIÓN (CON PROTECCIÓN DUPLICADOS) ---
     with tab2:
         st.header(t["enroll_title"])
         @st.cache_data(ttl=60)
@@ -612,7 +612,7 @@ if st.session_state["authentication_status"] is True:
                 filtered_subjects = [s for s in filtered_subjects if s['semester'] == sem_num]
 
             st.markdown("---")
-            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None)
+            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None, placeholder=f"Se encontraron {len(filtered_subjects)} asignaturas...")
             
             if sel_name:
                 sid = next(s['id'] for s in subjects_data if s['name'] == sel_name)
@@ -627,16 +627,19 @@ if st.session_state["authentication_status"] is True:
                         col_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
-                                # FIX DUPLICADOS
+                                # PROTECCIÓN ANTI-DUPLICADOS
                                 existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
                                 if existe:
-                                    st.warning("⚠️ Ya inscrito en esta sección.")
+                                    st.warning("⚠️ Ya estás inscrito en esta sección.")
                                 else:
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
                                     st.cache_data.clear()
                                     time.sleep(1); st.rerun()
-                        else: col_b.button("Lleno", disabled=True, key=sec['id'])
+                        else:
+                            col_b.button("Lleno", disabled=True, key=sec['id'])
+        else:
+            st.error("No se pudo cargar el catálogo.")
 
         st.divider()
         st.subheader("Tu Horario")
@@ -657,20 +660,33 @@ if st.session_state["authentication_status"] is True:
                         st.rerun()
         else: st.info("Sin ramos.")
 
-    # --- TAB 3: ADMIN (4 COLUMNAS RESTAURADAS) ---
+    # --- TAB 3: ADMIN (LOGIN PERSISTENTE) ---
     with tab3:
         st.header(t["admin_title"])
-        pwd = st.text_input(t["admin_pass_label"], type="password")
-        if pwd == ADMIN_PASSWORD:
+        
+        # Si NO está logueado como admin
+        if not st.session_state.admin_auth:
+            pwd = st.text_input(t["admin_pass_label"], type="password")
+            if st.button("Ingresar al Panel"):
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state.admin_auth = True
+                    st.rerun()
+                else:
+                    st.error("Clave incorrecta")
+        
+        # Si SÍ está logueado como admin
+        else:
             st.success(t["admin_success"])
-            
-            # Restauramos las 4 columnas que te gustaban
+            if st.button("Cerrar Panel Admin"):
+                st.session_state.admin_auth = False
+                st.rerun()
+
+            # DASHBOARD RESTAURADO (4 Columnas)
             col1, col2, col3, col4 = st.columns(4)
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
             
-            # Cálculo de métricas detallado
             feedbacks_all = supabase.table('feedback').select('rating').execute().data
             likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
@@ -679,11 +695,8 @@ if st.session_state["authentication_status"] is True:
             
             col1.metric("Usuarios", total_users)
             col2.metric("Interacciones", total_chats)
-            col3.metric("Likes 👍", likes)
-            # El 4to KPI que querías: "Reportes Negativos" en rojo o Satisfacción
-            col4.metric("Negativos 👎", dislikes, delta="-Reportes" if dislikes > 0 else "Ok", delta_color="inverse")
-            
-            if st.button(t["admin_update_btn"]): st.rerun()
+            col3.metric("Satisfacción", f"{satisfaction}%")
+            col4.metric("Negativos", dislikes, delta="-Alertas" if dislikes > 0 else "Ok", delta_color="inverse")
             
             st.subheader("Registro de Feedback")
             try:
@@ -708,7 +721,7 @@ else:
             submit = st.form_submit_button(t["login_btn"], use_container_width=True)
             
             if submit:
-                # FIX: Limpiar caché para asegurar datos frescos
+                # FIX: Limpiar caché para login fresco
                 fetch_all_users.clear()
                 all_users = fetch_all_users()
                 if input_email in all_users:
@@ -735,6 +748,5 @@ else:
                 try:
                     supabase.table('profiles').insert({'full_name': n, 'email': e, 'password_hash': hashed}).execute()
                     st.success(t["reg_success"])
-                    # Limpiar caché para que el nuevo usuario pueda entrar al tiro
-                    fetch_all_users.clear()
+                    fetch_all_users.clear() # Limpiar caché para que pueda entrar al tiro
                 except: st.error(t["auth_error"])
