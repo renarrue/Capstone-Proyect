@@ -1,4 +1,4 @@
-# Versión 45.0 (MASTER FINAL: Admin Persistente + Anti-Duplicados + Export + RAG)
+# Versión 43.0 (FIX CRÍTICO: Login ID + Registro Restaurado)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -423,9 +423,10 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
-# --- FETCH USERS (FIX LOGIN) ---
+# --- FUNCION CRÍTICA CORREGIDA: FETCH USERS CON ID ---
 def fetch_all_users():
     try:
+        # AQUÍ ESTABA EL ERROR: Agregamos 'id' al select para que no falle
         response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
         if not response.data: return {}
         users_dict = {}
@@ -457,8 +458,8 @@ with col_title1: st.image(LOGO_ICON_URL, width=70)
 with col_title2: st.title(t["title"])
 
 # --- AUTH STATE ---
-if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
-if "admin_auth" not in st.session_state: st.session_state.admin_auth = False # ESTADO ADMIN
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
 
 # ==========================================
 # APP PRINCIPAL
@@ -478,13 +479,12 @@ if st.session_state["authentication_status"] is True:
     user_id = st.session_state.user_id
 
     c1, c2 = st.columns([0.8, 0.2])
-    saludo_hora = obtener_saludo_hora()
-    c1.subheader(f"{saludo_hora} {user_name}")
+    saludo = obtener_saludo_hora()
+    c1.subheader(f"{saludo} {user_name}")
     c1.caption(f"{t['login_success']} {user_email}")
     
     if c2.button(t["logout_btn"], use_container_width=True):
         st.session_state["authentication_status"] = None
-        st.session_state.admin_auth = False
         st.session_state.clear()
         st.rerun()
 
@@ -527,8 +527,7 @@ if st.session_state["authentication_status"] is True:
                     with st.spinner(t["chat_thinking"]):
                         try:
                             resp = retrieval_chain.invoke({"input": sugerencia, "user_name": user_name})["answer"]
-                        except Exception as e:
-                            resp = "Error al procesar."
+                        except: resp = "Error."
                     st.write(resp)
                 st.session_state.messages.append({"role": "assistant", "content": resp})
                 supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
@@ -595,37 +594,39 @@ if st.session_state["authentication_status"] is True:
         subjects_data = supabase.table('subjects').select('*').execute().data
         
         if subjects_data:
-            c1, c2, c3 = st.columns([2, 2, 1])
-            careers = sorted(list(set([s['career'] for s in subjects_data if s.get('career')])))
-            sems = sorted(list(set([s['semester'] for s in subjects_data if s.get('semester')])))
+            c_filter1, c_filter2, c_reset = st.columns([2, 2, 1])
+            all_careers = sorted(list(set([s['career'] for s in subjects_data if s.get('career')])))
+            all_semesters = sorted(list(set([s['semester'] for s in subjects_data if s.get('semester')])))
             
-            with c1: cat_car = st.selectbox(t["filter_career"], ["Todas"] + careers)
-            with c2: cat_sem = st.selectbox(t["filter_sem"], ["Todos"] + [f"Semestre {s}" for s in sems])
-            with c3: 
+            with c_filter1: cat_carrera = st.selectbox(t["filter_career"], ["Todas"] + all_careers)
+            with c_filter2: cat_semestre = st.selectbox(t["filter_sem"], ["Todos"] + [f"Semestre {s}" for s in all_semesters])
+            with c_reset:
                 st.write(""); st.write("")
                 if st.button(t["reset_btn"]): st.rerun()
 
-            filtered = subjects_data
-            if cat_car != "Todas": filtered = [s for s in filtered if s['career'] == cat_car]
-            if cat_sem != "Todos": filtered = [s for s in filtered if s['semester'] == int(cat_sem.split(" ")[1])]
+            filtered_subjects = subjects_data
+            if cat_carrera != "Todas": filtered_subjects = [s for s in filtered_subjects if s['career'] == cat_carrera]
+            if cat_semestre != "Todos": 
+                sem_num = int(cat_semestre.split(" ")[1])
+                filtered_subjects = [s for s in filtered_subjects if s['semester'] == sem_num]
 
             st.markdown("---")
-            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered], index=None)
+            sel_name = st.selectbox(t["search_label"], [s['name'] for s in filtered_subjects], index=None)
             
             if sel_name:
                 sid = next(s['id'] for s in subjects_data if s['name'] == sel_name)
                 secs = supabase.table('sections').select('*').eq('subject_id', sid).execute().data
                 st.subheader(f"Secciones: {sel_name}")
-                if not secs: st.warning("Sin secciones.")
+                if not secs: st.warning("No hay secciones.")
                 for sec in secs:
                     with st.container(border=True):
-                        insc = supabase.table('registrations').select('id', count='exact').eq('section_id', sec['id']).execute().count
-                        cupos = sec['capacity'] - (insc or 0)
-                        c_a, c_b = st.columns([4, 1])
-                        c_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
+                        inscritos = supabase.table('registrations').select('id', count='exact').eq('section_id', sec['id']).execute().count
+                        cupos = sec['capacity'] - (inscritos if inscritos else 0)
+                        col_a, col_b = st.columns([4, 1])
+                        col_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
-                                # FIX DUPLICADOS
+                                # CHEQUEO ANTI-DUPLICADOS
                                 existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
                                 if existe:
                                     st.warning("⚠️ Ya inscrito.")
@@ -655,73 +656,76 @@ if st.session_state["authentication_status"] is True:
                         st.rerun()
         else: st.info("Sin ramos.")
 
-    # --- TAB 3: ADMIN (FIX LOGIN BUTTON) ---
+    # --- TAB 3: ADMIN (METRICAS FULL) ---
     with tab3:
         st.header(t["admin_title"])
-        
-        if not st.session_state.admin_auth:
-            pwd = st.text_input(t["admin_pass_label"], type="password")
-            if st.button("Ingresar al Panel"):
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state.admin_auth = True
-                    st.rerun()
-                else:
-                    st.error("Clave incorrecta")
-        else:
+        pwd = st.text_input(t["admin_pass_label"], type="password")
+        if pwd == ADMIN_PASSWORD:
             st.success(t["admin_success"])
-            if st.button("Salir del Panel"):
-                st.session_state.admin_auth = False
-                st.rerun()
+            col1, col2, col3 = st.columns(3)
             
-            # DASHBOARD
-            c1, c2, c3 = st.columns(3)
-            u_count = supabase.table('profiles').select('id', count='exact', head=True).execute().count
-            c_count = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
-            fb_all = supabase.table('feedback').select('rating').execute().data
-            likes = len([f for f in fb_all if f['rating'] == 'good'])
-            dislikes = len([f for f in fb_all if f['rating'] == 'bad'])
+            total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
+            total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
+            feedbacks_all = supabase.table('feedback').select('rating').execute().data
             
-            c1.metric("Usuarios", u_count)
-            c2.metric("Chats", c_count)
-            c3.metric("Likes/Dislikes", f"{likes}/{dislikes}")
+            likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
+            dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
+            total_fb = len(feedbacks_all) if feedbacks_all else 0
+            satisfaction = int((likes / total_fb * 100)) if total_fb > 0 else 0
             
-            st.subheader("Feedback")
+            col1.metric("Usuarios", total_users)
+            col2.metric("Interacciones", total_chats)
+            col3.metric("Satisfacción", f"{satisfaction}%")
+            
+            c_a, c_b = st.columns(2)
+            c_a.metric("Positivos", likes)
+            c_b.metric("Negativos", dislikes)
+            
+            if st.button(t["admin_update_btn"]): st.rerun()
+            
+            st.subheader("Registro de Feedback")
             try:
-                data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
-                if data:
-                    df = pd.DataFrame(data)
-                    if 'profiles' in df.columns: df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else '-')
-                    st.dataframe(df.drop(columns=['profiles'], errors='ignore'))
-                else: st.info("Vacio.")
+                fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
+                if fb_data:
+                    df = pd.DataFrame(fb_data)
+                    if 'profiles' in df.columns:
+                        df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
+                        df = df.drop(columns=['profiles'])
+                    st.dataframe(df)
+                else: st.info("Sin feedback aún.")
             except: pass
 
-# --- LOGIN/REGISTER ---
+# --- LOGIN FORM (RESTAURADO) ---
 else:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.subheader(t["login_title"])
-        with st.form("login"):
-            email = st.text_input(t["login_user"])
-            pwd = st.text_input(t["login_pass"], type="password")
-            if st.form_submit_button(t["login_btn"], use_container_width=True):
-                users = fetch_all_users()
-                if email in users and bcrypt.checkpw(pwd.encode(), users[email]['password_hash'].encode()):
-                    st.session_state["authentication_status"] = True
-                    st.session_state["name"] = users[email]['full_name']
-                    st.session_state["username"] = email
-                    st.session_state["user_id"] = users[email]['id']
-                    st.rerun()
+        with st.form("login_form", enter_to_submit=False):
+            input_email = st.text_input(t["login_user"])
+            input_pass = st.text_input(t["login_pass"], type="password")
+            submit = st.form_submit_button(t["login_btn"], use_container_width=True)
+            if submit:
+                all_users = fetch_all_users()
+                if input_email in all_users:
+                    stored_hash = all_users[input_email]['password_hash']
+                    if bcrypt.checkpw(input_pass.encode('utf-8'), stored_hash.encode('utf-8')):
+                        st.session_state["authentication_status"] = True
+                        st.session_state["name"] = all_users[input_email]['full_name']
+                        st.session_state["username"] = input_email
+                        st.session_state["user_id"] = all_users[input_email]['id']
+                        st.rerun()
+                    else: st.error(t["login_failed"])
                 else: st.error(t["login_failed"])
 
     with st.sidebar:
         st.subheader(t["reg_header"])
-        with st.form("reg"):
+        with st.form("reg", enter_to_submit=False):
             n = st.text_input(t["reg_name"])
             e = st.text_input(t["reg_email"])
             p = st.text_input(t["reg_pass"], type="password")
             if st.form_submit_button(t["reg_btn"]):
-                h = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+                hashed = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 try:
-                    supabase.table('profiles').insert({'email':e, 'full_name':n, 'password_hash':h}).execute()
+                    supabase.table('profiles').insert({'full_name': n, 'email': e, 'password_hash': hashed}).execute()
                     st.success(t["reg_success"])
-                except: st.error("Error")
+                except: st.error(t["auth_error"])
