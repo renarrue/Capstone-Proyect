@@ -1,4 +1,4 @@
-# Versión 46.0 (MASTER FINAL: Admin Dashboard Restaurado + Todo Funcional)
+# Versión 47.0 (MASTER FINAL: Fix Cache Error + Admin 4-Cols + Todo Funcional)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -424,7 +424,8 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
-# --- FETCH USERS CON ID ---
+# --- FETCH USERS CON CACHE (FIX CRÍTICO) ---
+@st.cache_data(ttl=60) # <--- ESTO FALTABA EN EL CÓDIGO ANTERIOR
 def fetch_all_users():
     try:
         response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
@@ -458,8 +459,8 @@ with col_title1: st.image(LOGO_ICON_URL, width=70)
 with col_title2: st.title(t["title"])
 
 # --- AUTH STATE ---
-if "authentication_status" not in st.session_state: st.session_state["authentication_status"] = None
-if "admin_auth" not in st.session_state: st.session_state.admin_auth = False
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
 
 # ==========================================
 # APP PRINCIPAL
@@ -637,7 +638,10 @@ if st.session_state["authentication_status"] is True:
                                     st.success("✅ Listo")
                                     st.cache_data.clear()
                                     time.sleep(1); st.rerun()
-                        else: col_b.button("Lleno", disabled=True, key=sec['id'])
+                        else:
+                            col_b.button("Lleno", disabled=True, key=sec['id'])
+        else:
+            st.error("No se pudo cargar el catálogo.")
 
         st.divider()
         st.subheader("Tu Horario")
@@ -662,7 +666,7 @@ if st.session_state["authentication_status"] is True:
     with tab3:
         st.header(t["admin_title"])
         
-        if not st.session_state.admin_auth:
+        if not st.session_state.get('admin_auth', False):
             pwd = st.text_input(t["admin_pass_label"], type="password")
             if st.button("Ingresar al Panel"):
                 if pwd == ADMIN_PASSWORD:
@@ -678,7 +682,7 @@ if st.session_state["authentication_status"] is True:
             
             st.markdown("### Métricas Generales")
             
-            # MÉTRICAS EN 4 COLUMNAS COMO PEDISTE
+            # MÉTRICAS EN 4 COLUMNAS
             col1, col2, col3, col4 = st.columns(4)
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
@@ -698,32 +702,22 @@ if st.session_state["authentication_status"] is True:
             
             if st.button(t["admin_update_btn"]): st.rerun()
             
-            st.markdown("🔥 Mostrar solo Feedback Negativo (Errores)")
-            st.write("Cargando detalles...")
-            
             st.subheader(f"Registro Detallado ({total_fb} filas)")
             try:
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
                     df = pd.DataFrame(fb_data)
-                    # Limpieza y renombramiento de columnas para que se vea igual a la foto
                     if 'profiles' in df.columns:
                         df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
-                    
-                    # Renombrar columnas para que coincida con la foto
-                    df_display = df.rename(columns={
+                        df = df.drop(columns=['profiles'])
+                    # Renombrar columnas para visualización
+                    df = df.rename(columns={
                         'created_at': 'Fecha/Hora',
-                        'message': 'Pregunta Estudiante/Respuesta', # Aproximación
+                        'message': 'Pregunta/Contexto',
                         'rating': 'Eval',
                         'comment': 'Detalle'
                     })
-                    
-                    # Seleccionar columnas relevantes
-                    cols_to_show = ['Fecha/Hora', 'Eval', 'Detalle', 'Usuario']
-                    # Asegurarse de que existan
-                    existing_cols = [c for c in cols_to_show if c in df_display.columns]
-                    
-                    st.dataframe(df_display[existing_cols])
+                    st.dataframe(df)
                 else:
                     st.info("Sin feedback aún.")
             except Exception as e:
