@@ -1,4 +1,4 @@
-# Versión 47.0 (MASTER FINAL: Fix Cache Error + Admin 4-Cols + Todo Funcional)
+# Versión 48.0 (MASTER FINAL: Feedback Estable + Admin 4-Cols + Login Fix)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -272,7 +272,7 @@ def stream_data(text):
         yield word + " "
         time.sleep(0.02)
 
-# --- FUNCIONES DE EXPORTACIÓN (PDF FIX WRAPPING) ---
+# --- FUNCIONES DE EXPORTACIÓN ---
 def generar_pdf_horario(sections, user_name):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -313,7 +313,6 @@ def generar_pdf_horario(sections, user_name):
     
     for section in sections:
         subj = section.get('subjects', {})
-        
         name_para = Paragraph(subj.get('name', 'N/A'), cell_style)
         prof_para = Paragraph(section.get('professor_name', 'N/A'), cell_style)
         code_para = Paragraph(section.get('section_code', 'N/A'), cell_style)
@@ -424,8 +423,8 @@ def inicializar_cadena(language_code):
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     return retrieval_chain
 
-# --- FETCH USERS CON CACHE (FIX CRÍTICO) ---
-@st.cache_data(ttl=60) # <--- ESTO FALTABA EN EL CÓDIGO ANTERIOR
+# --- FETCH USERS CON CACHE (FIX LOGIN) ---
+@st.cache_data(ttl=60)
 def fetch_all_users():
     try:
         response = supabase.table('profiles').select("id, email, full_name, password_hash").execute()
@@ -557,34 +556,53 @@ if st.session_state["authentication_status"] is True:
             st.session_state.messages.append({"role": "assistant", "content": resp})
             supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
 
-        # FEEDBACK
+        # --- FEEDBACK PERSISTENTE (FIX KEY STATIC) ---
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
             st.write("---")
-            fb_state_key = "feedback_open"
-            if fb_state_key not in st.session_state: st.session_state[fb_state_key] = False
             
-            col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
-            with col_f1:
-                if st.button("👍", key=f"btn_like_{int(time.time())}"):
-                    supabase.table('feedback').insert({'user_id': user_id, 'message': st.session_state.messages[-1]["content"][:500], 'rating': 'good'}).execute()
-                    st.toast(t["feedback_thanks"])
-            with col_f2:
-                if st.button("👎", key=f"btn_dislike_{int(time.time())}"):
-                    st.session_state[fb_state_key] = True
+            # Estado para controlar la visibilidad del formulario
+            if "show_feedback_form" not in st.session_state:
+                st.session_state.show_feedback_form = False
 
-            if st.session_state[fb_state_key]:
+            col_f1, col_f2, col_f3 = st.columns([0.1, 0.1, 0.8])
+            
+            with col_f1:
+                # Clave estática para que no cambie con el tiempo
+                if st.button("👍", key="btn_thumb_up", help="Respuesta útil"):
+                    supabase.table('feedback').insert({
+                        'user_id': user_id,
+                        'message': st.session_state.messages[-1]["content"][:500],
+                        'rating': 'good',
+                        'comment': 'Voto positivo'
+                    }).execute()
+                    st.toast(t["feedback_thanks"])
+
+            with col_f2:
+                # Clave estática para el botón de dislike
+                if st.button("👎", key="btn_thumb_down", help="Reportar error"):
+                    st.session_state.show_feedback_form = True
+
+            # El formulario persiste porque depende de la variable de sesión, no del botón
+            if st.session_state.show_feedback_form:
                 with st.container():
-                    with st.form(key=f"fb_form_{int(time.time())}"):
+                    with st.form(key="fb_form_fixed"):
                         st.write(t["feedback_modal_title"])
                         comment = st.text_area(t["feedback_modal_placeholder"])
-                        c_s1, c_s2 = st.columns(2)
-                        if c_s1.form_submit_button(t["btn_send"]):
-                            supabase.table('feedback').insert({'user_id': user_id, 'message': st.session_state.messages[-1]["content"][:500], 'rating': 'bad', 'comment': comment}).execute()
+                        c_sub1, c_sub2 = st.columns(2)
+                        
+                        if c_sub1.form_submit_button(t["btn_send"]):
+                            supabase.table('feedback').insert({
+                                'user_id': user_id,
+                                'message': st.session_state.messages[-1]["content"][:500],
+                                'rating': 'bad',
+                                'comment': comment if comment else "Sin detalle"
+                            }).execute()
                             st.toast(t["feedback_report_sent"])
-                            st.session_state[fb_state_key] = False
+                            st.session_state.show_feedback_form = False
                             st.rerun()
-                        if c_s2.form_submit_button(t["btn_cancel"]):
-                            st.session_state[fb_state_key] = False
+                        
+                        if c_sub2.form_submit_button(t["btn_cancel"]):
+                            st.session_state.show_feedback_form = False
                             st.rerun()
 
     # --- TAB 2: INSCRIPCIÓN ---
@@ -632,7 +650,7 @@ if st.session_state["authentication_status"] is True:
                                 # FIX DUPLICADOS
                                 existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
                                 if existe:
-                                    st.warning("⚠️ Ya inscrito.")
+                                    st.warning("⚠️ Ya inscrito en esta sección.")
                                 else:
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
@@ -662,7 +680,7 @@ if st.session_state["authentication_status"] is True:
                         st.rerun()
         else: st.info("Sin ramos.")
 
-    # --- TAB 3: ADMIN (DASHBOARD RESTAURADO) ---
+    # --- TAB 3: ADMIN (4 COLUMNAS) ---
     with tab3:
         st.header(t["admin_title"])
         
@@ -681,14 +699,11 @@ if st.session_state["authentication_status"] is True:
                 st.rerun()
             
             st.markdown("### Métricas Generales")
-            
-            # MÉTRICAS EN 4 COLUMNAS
             col1, col2, col3, col4 = st.columns(4)
             
             total_users = supabase.table('profiles').select('id', count='exact', head=True).execute().count
             total_chats = supabase.table('chat_history').select('id', count='exact', head=True).execute().count
             
-            # Lógica de Feedback
             feedbacks_all = supabase.table('feedback').select('rating').execute().data
             likes = len([f for f in feedbacks_all if f['rating'] == 'good'])
             dislikes = len([f for f in feedbacks_all if f['rating'] == 'bad'])
@@ -710,7 +725,7 @@ if st.session_state["authentication_status"] is True:
                     if 'profiles' in df.columns:
                         df['Usuario'] = df['profiles'].apply(lambda x: x['email'] if x else 'N/A')
                         df = df.drop(columns=['profiles'])
-                    # Renombrar columnas para visualización
+                    
                     df = df.rename(columns={
                         'created_at': 'Fecha/Hora',
                         'message': 'Pregunta/Contexto',
