@@ -1,4 +1,4 @@
-# Versión 51.0 (FINAL: Fix Anular Ramo Cache + Feedback + Admin + Todo)
+# Versión 52.0 (FINAL: Validaciones Horario y Duplicidad + Mejoras)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -641,15 +641,58 @@ if st.session_state["authentication_status"] is True:
                         col_a.write(f"**{sec['section_code']}** | {sec['day_of_week']} | {sec['start_time'][:5]}-{sec['end_time'][:5]} | {sec['professor_name']}")
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
-                                existe = supabase.table('registrations').select('id').eq('user_id', user_id).eq('section_id', sec['id']).execute().data
-                                if existe:
-                                    st.warning("⚠️ Ya inscrito.")
+                                # --------------------------------------------
+                                # INICIO DE NUEVA LÓGICA DE VALIDACIÓN (V52.0)
+                                # --------------------------------------------
+                                
+                                # 1. Traer inscripciones actuales del usuario (incluyendo detalles de sección)
+                                reg_check = supabase.table('registrations').select('*, sections(*)').eq('user_id', user_id).execute().data
+                                
+                                conflicto_asignatura = False
+                                conflicto_horario = False
+                                
+                                # Datos de la NUEVA sección
+                                new_start = datetime.strptime(sec['start_time'], "%H:%M:%S").time()
+                                new_end = datetime.strptime(sec['end_time'], "%H:%M:%S").time()
+                                new_day = sec['day_of_week']
+                                
+                                if reg_check:
+                                    for reg in reg_check:
+                                        existing_sec = reg['sections']
+                                        
+                                        # VALIDACIÓN 1: Misma Asignatura (subject_id)
+                                        # Si el subject_id de lo que ya tengo es igual al de la nueva sección
+                                        if existing_sec['subject_id'] == sec['subject_id']:
+                                            conflicto_asignatura = True
+                                            break
+                                        
+                                        # VALIDACIÓN 2: Tope de Horario
+                                        # Si es el mismo día...
+                                        if existing_sec['day_of_week'] == new_day:
+                                            # Convertir horas existentes
+                                            ex_start = datetime.strptime(existing_sec['start_time'], "%H:%M:%S").time()
+                                            ex_end = datetime.strptime(existing_sec['end_time'], "%H:%M:%S").time()
+                                            
+                                            # Lógica de solapamiento: (InicioA < FinB) y (InicioB < FinA)
+                                            if new_start < ex_end and ex_start < new_end:
+                                                conflicto_horario = True
+                                                break
+
+                                if conflicto_asignatura:
+                                    st.error("No se puede inscribir 2 veces la misma asignatura")
+                                elif conflicto_horario:
+                                    st.error("No puede haber choque de horarios")
                                 else:
+                                    # Si pasa ambas validaciones, inscribe
                                     supabase.table('registrations').insert({'user_id': user_id, 'section_id': sec['id']}).execute()
                                     st.success("✅ Listo")
                                     st.cache_data.clear()
-                                    get_schedule.clear() # FIX DE CACHÉ AQUÍ TAMBIÉN
+                                    get_schedule.clear()
                                     time.sleep(1); st.rerun()
+                                
+                                # --------------------------------------------
+                                # FIN DE NUEVA LÓGICA
+                                # --------------------------------------------
                         else:
                             col_b.button("Lleno", disabled=True, key=sec['id'])
         else:
