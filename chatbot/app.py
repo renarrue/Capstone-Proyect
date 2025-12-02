@@ -1,4 +1,4 @@
-# Versión 53.0 (FINAL: Fix Validaciones + Visualización Hora Término)
+# Versión 55.0 (FINAL: Corrección Columna is_visible + Validaciones + Visual)
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -117,7 +117,7 @@ TEXTS = {
         "login_failed": "❌ Credenciales inválidas",
         "login_welcome": "¡Bienvenido al Asistente!",
         "chat_clear_btn": "🧹 Limpiar Conversación",
-        "chat_cleaning": "Procesando solicitud...",
+        "chat_cleaning": "Archivando historial...",
         "chat_cleaned": "¡Historial limpiado!",
         "chat_welcome": "¡Hola **{name}**! 👋 Soy tu asistente virtual. Puedo responder dudas del reglamento o ayudarte a buscar asignaturas.",
         "chat_welcome_clean": "¡Hola **{name}**! Historial archivado. ¿En qué más te ayudo?",
@@ -190,7 +190,7 @@ TEXTS = {
         "login_failed": "❌ Invalid credentials",
         "login_welcome": "Welcome to the Assistant!",
         "chat_clear_btn": "🧹 Clear Conversation",
-        "chat_cleaning": "Processing...",
+        "chat_cleaning": "Archiving history...",
         "chat_cleaned": "History cleared!",
         "chat_welcome": "Hello **{name}**! 👋 I'm your Duoc UC assistant. Ask me about rules, dates, or search for courses.",
         "chat_welcome_clean": "Hello **{name}**! History archived. Can I help with anything else?",
@@ -493,18 +493,38 @@ if st.session_state["authentication_status"] is True:
 
     # --- TAB 1: CHATBOT ---
     with tab1:
+        # ----------------------------------------------------
+        # NUEVA LÓGICA DE LIMPIEZA (SOFT DELETE) - V55.0 (Nombre is_visible corregido)
+        # ----------------------------------------------------
         if st.button(t["chat_clear_btn"], use_container_width=True, key="clear_chat"):
-            st.session_state.messages = []
-            st.rerun()
+            with st.spinner(t["chat_cleaning"]):
+                try:
+                    # CORRECCIÓN: Usamos 'is_visible'
+                    supabase.table('chat_history').update({'is_visible': False}).eq('user_id', user_id).execute()
+                    st.session_state.messages = []
+                    st.toast(t["chat_cleaned"])
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error (Columna 'is_visible' debe existir en DB): {e}")
         
         st.divider()
         retrieval_chain = inicializar_cadena(lang_code)
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
-            history = supabase.table('chat_history').select('id, role, message').eq('user_id', user_id).order('created_at').execute()
+            # ----------------------------------------------------
+            # FILTRO DE VISIBILIDAD - V55.0
+            # ----------------------------------------------------
+            # CORRECCIÓN: Usamos 'is_visible'
+            history = supabase.table('chat_history').select('id, role, message')\
+                .eq('user_id', user_id)\
+                .eq('is_visible', True)\
+                .order('created_at').execute()
+                
             for row in history.data:
                 st.session_state.messages.append({"id": row.get('id'), "role": row['role'], "content": row['message']})
+            
             if not st.session_state.messages:
                 st.session_state.messages.append({"role": "assistant", "content": f"¡Hola {user_name}! 👋"})
 
@@ -523,7 +543,8 @@ if st.session_state["authentication_status"] is True:
             
             if sugerencia:
                 st.session_state.messages.append({"role": "user", "content": sugerencia})
-                supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia}).execute()
+                # CORRECCIÓN: 'is_visible': True
+                supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': sugerencia, 'is_visible': True}).execute()
                 with st.chat_message("assistant"):
                     with st.spinner(t["chat_thinking"]):
                         try:
@@ -532,7 +553,8 @@ if st.session_state["authentication_status"] is True:
                             resp = "Error al procesar."
                     st.write(resp)
                 
-                res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+                # CORRECCIÓN: 'is_visible': True
+                res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp, 'is_visible': True}).execute()
                 msg_id = res_data.data[0]['id'] if res_data.data else None
                 
                 st.session_state.messages.append({"id": msg_id, "role": "assistant", "content": resp})
@@ -542,7 +564,8 @@ if st.session_state["authentication_status"] is True:
         if prompt := st.chat_input(t["chat_placeholder"]):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
-            supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt}).execute()
+            # CORRECCIÓN: 'is_visible': True
+            supabase.table('chat_history').insert({'user_id': user_id, 'role': 'user', 'message': prompt, 'is_visible': True}).execute()
             
             prompt_limpio = prompt.lower().strip().strip("?!.,")
             
@@ -556,7 +579,8 @@ if st.session_state["authentication_status"] is True:
                         except: resp = "Error de conexión."
                 st.write_stream(stream_data(resp))
             
-            res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp}).execute()
+            # CORRECCIÓN: 'is_visible': True
+            res_data = supabase.table('chat_history').insert({'user_id': user_id, 'role': 'assistant', 'message': resp, 'is_visible': True}).execute()
             msg_id = res_data.data[0]['id'] if res_data.data else None
             
             st.session_state.messages.append({"id": msg_id, "role": "assistant", "content": resp})
@@ -642,7 +666,7 @@ if st.session_state["authentication_status"] is True:
                         if cupos > 0:
                             if col_b.button(f"Inscribir ({cupos})", key=sec['id']):
                                 # --------------------------------------------
-                                # VALIDACIONES (DUPLICIDAD Y CHOQUE) - V52.0
+                                # VALIDACIONES (DUPLICIDAD Y CHOQUE)
                                 # --------------------------------------------
                                 reg_check = supabase.table('registrations').select('*, sections(*)').eq('user_id', user_id).execute().data
                                 conflicto_asignatura = False
@@ -696,7 +720,7 @@ if st.session_state["authentication_status"] is True:
                 with st.expander(f"📘 {s['subjects']['name']}"):
                     c1, c2 = st.columns([4, 1])
                     # --------------------------------------------
-                    # CAMBIO VISUAL (HORA INICIO Y FINAL) - V53.0
+                    # VISUALIZACIÓN HORARIA (INICIO - FIN)
                     # --------------------------------------------
                     c1.write(f"**{s['day_of_week']}** | {s['start_time'][:5]} - {s['end_time'][:5]} | {s['professor_name']}")
                     
@@ -745,6 +769,7 @@ if st.session_state["authentication_status"] is True:
             
             st.subheader(f"Registro Detallado ({total_fb} filas)")
             try:
+                # ADMIN: Sigue viendo todo porque no filtramos por 'is_visible'
                 fb_data = supabase.table('feedback').select('*, profiles(email)').order('created_at', desc=True).execute().data
                 if fb_data:
                     df = pd.DataFrame(fb_data)
